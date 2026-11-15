@@ -1,0 +1,4 @@
+# Copy this file to local.properties only if you need to run Gradle directly.
+# Replace both values with SDK paths on your Windows development machine.
+flutter.sdk=C:\\PATH\\TO\\FLUTTER
+sdk.dir=C:\\Users\\YOUR_USER\\AppData\\Local\\Android\\Sdk
