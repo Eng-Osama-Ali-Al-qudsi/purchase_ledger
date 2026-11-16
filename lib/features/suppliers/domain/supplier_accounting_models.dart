@@ -21,12 +21,14 @@ class SupplierCurrencySummary {
 class SupplierMonthlyActivity {
   const SupplierMonthlyActivity({
     required this.month,
+    required this.currency,
     required this.purchasesMinor,
     required this.paymentsMinor,
     required this.returnsMinor,
   });
 
   final String month;
+  final String currency;
   final int purchasesMinor;
   final int paymentsMinor;
   final int returnsMinor;

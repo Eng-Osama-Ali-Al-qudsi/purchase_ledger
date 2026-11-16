@@ -56,7 +56,11 @@ class _SupplierStatementScreenState
   }
 
   void _refresh() {
-    setState(() => _statementFuture = _loadStatement());
+    final pending = _loadStatement();
+    if (!mounted) return;
+    setState(() {
+      _statementFuture = pending;
+    });
   }
 
   @override
@@ -83,7 +87,7 @@ class _SupplierStatementScreenState
           ),
         ],
       ),
-      body: Column(
+      body: SafeArea(top: false, child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
@@ -205,7 +209,7 @@ class _SupplierStatementScreenState
             ),
           ),
         ],
-      ),
+      )),
     );
   }
 

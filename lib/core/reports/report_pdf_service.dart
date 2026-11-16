@@ -214,11 +214,9 @@ class ReportPdfService {
               _tableRow(
                 font,
                 [
-                  'ملاحظات',
-                  'المتبقي',
                   'المدفوع',
                   'طريقة الدفع',
-                  'البائع',
+                  'المورد (للآجل)',
                   'الإجمالي',
                   'سعر الوحدة',
                   'الوحدة',
@@ -236,15 +234,6 @@ class ReportPdfService {
                   _tableRow(
                     font,
                     [
-                      operation.items[itemIndex].notes ?? operation.notes ?? '',
-                      itemIndex == 0
-                          ? _money(
-                              operation.isSupplierAccount
-                                  ? operation.supplierAccountCreditMinor
-                                  : operation.outstandingMinor,
-                              operation.currency,
-                            )
-                          : '',
                       itemIndex == 0
                           ? _money(
                               operation.amountPaidMinor +
@@ -253,9 +242,9 @@ class ReportPdfService {
                             )
                           : '',
                       itemIndex == 0 ? _dailyPaymentLabel(operation) : '',
-                      operation.items[itemIndex].sellerName ??
-                          operation.sellerName ??
-                          '',
+                      operation.isSupplierAccount
+                          ? (operation.supplierName ?? operation.sellerName ?? '')
+                          : '',
                       _money(operation.items[itemIndex].lineTotalMinor,
                           operation.currency),
                       _money(operation.items[itemIndex].unitPriceMinor,
@@ -280,16 +269,14 @@ class ReportPdfService {
                 columnWidths: const {
                   0: pw.FlexColumnWidth(1.1),
                   1: pw.FlexColumnWidth(1.0),
-                  2: pw.FlexColumnWidth(1.0),
+                  2: pw.FlexColumnWidth(1.3),
                   3: pw.FlexColumnWidth(1.0),
-                  4: pw.FlexColumnWidth(1.1),
-                  5: pw.FlexColumnWidth(1.1),
-                  6: pw.FlexColumnWidth(1.1),
-                  7: pw.FlexColumnWidth(.7),
-                  8: pw.FlexColumnWidth(.7),
-                  9: pw.FlexColumnWidth(1.0),
-                  10: pw.FlexColumnWidth(1.5),
-                  11: pw.FlexColumnWidth(.9),
+                  4: pw.FlexColumnWidth(1.0),
+                  5: pw.FlexColumnWidth(.75),
+                  6: pw.FlexColumnWidth(.65),
+                  7: pw.FlexColumnWidth(.9),
+                  8: pw.FlexColumnWidth(1.65),
+                  9: pw.FlexColumnWidth(.9),
                 },
                 children: tableRows,
               ),
@@ -448,8 +435,8 @@ class ReportPdfService {
         borderRadius: pw.BorderRadius.circular(5),
       ),
       child: pw.Wrap(
-        spacing: 18,
-        runSpacing: 7,
+        spacing: 9,
+        runSpacing: 5,
         children: [
           _infoItem(font, 'المورد', statement.supplierName),
           if (statement.supplierPhone != null)
@@ -457,6 +444,8 @@ class ReportPdfService {
           if (statement.supplierAddress != null)
             _infoItem(font, 'عنوان المورد', statement.supplierAddress!),
           _infoItem(font, 'العملة', statement.currency, ltr: true),
+          _infoItem(font, 'تاريخ الإصدار',
+              DateTime.now().toIso8601String().substring(0, 10), ltr: true),
           _infoItem(font, 'من تاريخ', statement.periodFrom ?? 'البداية',
               ltr: true),
           _infoItem(font, 'إلى تاريخ', statement.periodTo ?? 'حتى اليوم',
@@ -481,8 +470,8 @@ class ReportPdfService {
         borderRadius: pw.BorderRadius.circular(4),
       ),
       child: pw.Wrap(
-        spacing: 16,
-        runSpacing: 6,
+        spacing: 9,
+        runSpacing: 5,
         children: [
           _infoItem(font, 'رقم الورقة', report.sheet.sheetNumber, ltr: true),
           _infoItem(font, 'التاريخ', report.sheet.purchaseDate, ltr: true),
@@ -502,17 +491,28 @@ class ReportPdfService {
     String value, {
     bool ltr = false,
   }) {
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.end,
-      children: [
-        _arabicText(font, label, size: 8, color: PdfColors.grey700),
-        if (ltr)
-          pw.Text(value,
-              textDirection: pw.TextDirection.ltr,
-              style: const pw.TextStyle(fontSize: 9))
-        else
-          _arabicText(font, value, size: 9, bold: true),
-      ],
+    // Four compact metadata pairs per landscape A4 row. Keeping the label
+    // and value horizontally aligned avoids a tall block of empty whitespace.
+    return pw.SizedBox(
+      width: 184,
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Expanded(
+            flex: 3,
+            child: ltr
+                ? pw.Text(value, textDirection: pw.TextDirection.ltr,
+                    style: const pw.TextStyle(fontSize: 10))
+                : _arabicText(font, value, size: 10, bold: true),
+          ),
+          pw.SizedBox(width: 5),
+          pw.SizedBox(
+            width: 63,
+            child: _arabicText(font, '$label:', size: 8.8,
+                color: PdfColors.grey700),
+          ),
+        ],
+      ),
     );
   }
 
@@ -538,12 +538,12 @@ class ReportPdfService {
             pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.end,
               children: [
-                _arabicText(font, item.$1, size: 8, color: PdfColors.grey700),
+                _arabicText(font, item.$1, size: 9, color: PdfColors.grey700),
                 pw.Text(
                   _money(item.$2, currency),
                   textDirection: pw.TextDirection.ltr,
                   style: pw.TextStyle(
-                    fontSize: 9,
+                    fontSize: 10,
                     fontWeight: pw.FontWeight.bold,
                     color: PdfColors.teal900,
                   ),
@@ -596,6 +596,7 @@ class ReportPdfService {
     bool header = false,
   }) {
     return pw.TableRow(
+      repeat: header,
       decoration:
           header ? const pw.BoxDecoration(color: PdfColors.blueGrey800) : null,
       children: values.map((value) {
@@ -610,7 +611,7 @@ class ReportPdfService {
                   value,
                   textDirection: pw.TextDirection.ltr,
                   style: pw.TextStyle(
-                    fontSize: header ? 9 : 8,
+                    fontSize: header ? 10 : 8.8,
                     fontWeight:
                         header ? pw.FontWeight.bold : pw.FontWeight.normal,
                     color: header ? PdfColors.white : PdfColors.black,
@@ -619,7 +620,7 @@ class ReportPdfService {
               : _arabicText(
                   font,
                   value,
-                  size: header ? 9 : 8,
+                  size: header ? 10 : 8.8,
                   bold: header,
                   color: header ? PdfColors.white : PdfColors.black,
                 ),
@@ -631,7 +632,7 @@ class ReportPdfService {
   static pw.Widget _arabicText(
     ShapedFont font,
     String value, {
-    double size = 9,
+    double size = 9.8,
     bool bold = false,
     PdfColor color = PdfColors.black,
   }) {

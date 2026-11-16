@@ -414,7 +414,23 @@ class _PurchaseEntryDialogState extends ConsumerState<PurchaseEntryDialog> {
                   : null,
             ),
             const SizedBox(height: 8),
-            Row(
+            if (widget.isCredit) ...[
+              _creditUnitSelector(line),
+              const SizedBox(height: 8),
+              _field(
+                controller: line.quantity,
+                label: tr(context, 'الكمية', 'Quantity'),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                validator: _quantityValidator,
+              ),
+              const SizedBox(height: 8),
+              _field(
+                controller: line.price,
+                label: tr(context, 'سعر الوحدة', 'Unit price'),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                validator: _moneyValidator,
+              ),
+            ] else Row(
               children: [
                 Expanded(
                     child: _field(
@@ -425,9 +441,7 @@ class _PurchaseEntryDialogState extends ConsumerState<PurchaseEntryDialog> {
                         validator: _quantityValidator)),
                 const SizedBox(width: 7),
                 Expanded(
-                  child: widget.isCredit
-                      ? _creditUnitSelector(line)
-                      : _field(
+                  child: _field(
                           controller: line.unit,
                           label: tr(context, 'الوحدة', 'Unit'),
                           validator: (v) => v == null || v.trim().isEmpty
@@ -495,8 +509,14 @@ class _PurchaseEntryDialogState extends ConsumerState<PurchaseEntryDialog> {
               ? tr(context, 'اختر وحدة من الإعدادات', 'Select a saved unit')
               : null,
         ),
-          TextButton(onPressed: () => _addCreditUnit(line),
-            child: const Text('إضافة وحدة جديدة +')),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TextButton.icon(
+              onPressed: () => _addCreditUnit(line),
+              icon: const Icon(Icons.add_circle_outline),
+              label: Text(tr(context, 'إضافة وحدة جديدة', 'Add a new unit')),
+            ),
+          ),
         ]);
       },
     );
@@ -506,14 +526,14 @@ class _PurchaseEntryDialogState extends ConsumerState<PurchaseEntryDialog> {
     var proposed = '';
     final name = await showDialog<String>(context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('إضافة وحدة مشتريات آجلة'),
+        title: Text(tr(context, 'إضافة وحدة مشتريات آجلة', 'Add a credit-purchase unit')),
         content: TextField(autofocus: true, onChanged: (v) => proposed = v,
-          decoration: const InputDecoration(labelText: 'اسم الوحدة')),
+          decoration: InputDecoration(labelText: tr(context, 'اسم الوحدة', 'Unit name'))),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('إلغاء')),
+            child: Text(tr(context, 'إلغاء', 'Cancel'))),
           FilledButton(onPressed: () => Navigator.pop(dialogContext, proposed.trim()),
-            child: const Text('حفظ')),
+            child: Text(tr(context, 'حفظ', 'Save'))),
         ],
       ),
     );
@@ -523,7 +543,8 @@ class _PurchaseEntryDialogState extends ConsumerState<PurchaseEntryDialog> {
       ref.invalidate(creditMeasurementUnitsProvider);
       if (mounted) setState(() => line.unit.text = name.trim());
     } catch (error) {
-      if (mounted) setState(() => _error = 'تعذر حفظ الوحدة: $error');
+      if (mounted) setState(() => _error =
+          '${tr(context, 'تعذر حفظ الوحدة', 'Could not save the unit')}: $error');
     }
   }
 
@@ -602,6 +623,7 @@ class _PurchaseEntryDialogState extends ConsumerState<PurchaseEntryDialog> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     if (widget.isCredit && _supplierId == null) {
       setState(() =>
@@ -643,6 +665,7 @@ class _PurchaseEntryDialogState extends ConsumerState<PurchaseEntryDialog> {
         );
         ref.invalidate(creditInvoicesProvider);
         ref.invalidate(suppliersProvider);
+        ref.invalidate(supplierDashboardProvider);
       } else {
         await repository.createDailyPurchase(
           purchaseDate: _date.text.trim(),

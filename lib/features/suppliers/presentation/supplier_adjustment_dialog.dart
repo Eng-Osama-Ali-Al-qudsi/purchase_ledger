@@ -43,10 +43,13 @@ class _SupplierAdjustmentDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       title:
           Text(tr(context, 'تسوية حساب المورد', 'Supplier account adjustment')),
       content: SizedBox(
-        width: 420,
+        width: MediaQuery.sizeOf(context).width > 470
+            ? 420
+            : MediaQuery.sizeOf(context).width - 80,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -55,6 +58,7 @@ class _SupplierAdjustmentDialogState
                   style: const TextStyle(fontWeight: FontWeight.w800)),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 initialValue: _currency,
                 decoration: InputDecoration(
                     labelText: tr(context, 'العملة', 'Currency')),
@@ -68,6 +72,7 @@ class _SupplierAdjustmentDialogState
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 initialValue: _direction,
                 decoration: InputDecoration(
                     labelText:
@@ -76,13 +81,15 @@ class _SupplierAdjustmentDialogState
                   DropdownMenuItem(
                       value: 'increase',
                       child: Text(tr(context, 'زيادة المستحق للمورد',
-                          'Increase amount due to supplier'))),
+                          'Increase amount due to supplier'),
+                          maxLines: 1, overflow: TextOverflow.ellipsis)),
                   DropdownMenuItem(
                       value: 'decrease',
                       child: Text(tr(
                           context,
                           'تخفيض المستحق / زيادة الرصيد المقدم',
-                          'Reduce due / increase advance'))),
+                          'Reduce due / increase advance'),
+                          maxLines: 1, overflow: TextOverflow.ellipsis)),
                 ],
                 onChanged: (value) =>
                     setState(() => _direction = value ?? 'increase'),

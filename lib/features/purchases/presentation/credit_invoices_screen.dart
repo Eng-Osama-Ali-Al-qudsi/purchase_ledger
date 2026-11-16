@@ -11,7 +11,9 @@ import '../../suppliers/presentation/supplier_financial_details_screen.dart';
 import '../../suppliers/presentation/confirm_excess_payment.dart';
 
 class CreditInvoicesScreen extends ConsumerWidget {
-  const CreditInvoicesScreen({super.key});
+  const CreditInvoicesScreen({super.key, this.overdueOnly = false});
+
+  final bool overdueOnly;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -24,8 +26,11 @@ class CreditInvoicesScreen extends ConsumerWidget {
             children: [
               Expanded(
                 child: Text(
-                    tr(context, 'الفواتير الآجلة المسجلة لدى الموردين',
-                        'Credit invoices recorded with suppliers'),
+                    overdueOnly
+                        ? tr(context, 'الفواتير المتأخرة غير المسددة',
+                            'Unpaid overdue invoices')
+                        : tr(context, 'الفواتير الآجلة المسجلة لدى الموردين',
+                            'Credit invoices recorded with suppliers'),
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant)),
               ),
@@ -45,10 +50,18 @@ class CreditInvoicesScreen extends ConsumerWidget {
                   tr(context, 'تعذر تحميل الفواتير', 'Could not load invoices'),
               onRetry: () => ref.invalidate(creditInvoicesProvider),
             ),
-            data: (items) => items.isEmpty
+            data: (items) {
+              final today = DateTime.now().toIso8601String().substring(0, 10);
+              final displayed = overdueOnly
+                  ? items.where((item) => item.remainingMinor > 0 &&
+                      item.dueDate != null && item.dueDate!.compareTo(today) < 0)
+                      .toList(growable: false)
+                  : items;
+              return displayed.isEmpty
                 ? _StateMessage(
-                    title: tr(context, 'لا توجد فواتير آجلة',
-                        'No credit invoices yet'),
+                    title: overdueOnly
+                        ? tr(context, 'لا توجد فواتير متأخرة', 'No overdue invoices')
+                        : tr(context, 'لا توجد فواتير آجلة', 'No credit invoices yet'),
                     subtitle: tr(
                         context,
                         'أنشئ فاتورة واربطها بالمورد لتبدأ متابعة الرصيد.',
@@ -63,12 +76,13 @@ class CreditInvoicesScreen extends ConsumerWidget {
                     },
                     child: ListView.separated(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-                      itemCount: items.length,
+                      itemCount: displayed.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 9),
                       itemBuilder: (context, index) =>
-                          _InvoiceCard(invoice: items[index]),
+                          _InvoiceCard(invoice: displayed[index]),
                     ),
-                  ),
+                  );
+            },
           ),
         ),
       ],
@@ -199,6 +213,9 @@ class _InvoiceCard extends ConsumerWidget {
                       if (result == true) {
                         ref.invalidate(creditInvoicesProvider);
                         ref.invalidate(suppliersProvider);
+                        ref.invalidate(supplierDashboardProvider(invoice.supplierId));
+                        ref.invalidate(supplierPaymentsProvider(invoice.supplierId));
+                        ref.invalidate(supplierAdvancesProvider(invoice.supplierId));
                         ref.invalidate(dashboardProvider);
                       }
                     },

@@ -3,9 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
 import '../../../core/localization/app_strings.dart';
+import '../domain/daily_sheet_models.dart';
 
 class DailySheetCreateDialog extends ConsumerStatefulWidget {
-  const DailySheetCreateDialog({super.key});
+  const DailySheetCreateDialog({super.key, this.existing});
+
+  final DailySheetDetail? existing;
 
   @override
   ConsumerState<DailySheetCreateDialog> createState() =>
@@ -22,6 +25,20 @@ class _DailySheetCreateDialogState
   int? _employeeId;
   bool _saving = false;
   String? _error;
+  bool get _lockIdentity => widget.existing != null &&
+      !widget.existing!.canEditIdentity;
+
+  @override
+  void initState() {
+    super.initState();
+    final sheet = widget.existing;
+    if (sheet != null) {
+      _date.text = sheet.purchaseDate;
+      _notes.text = sheet.notes ?? '';
+      _branchId = sheet.branchId;
+      _employeeId = sheet.employeeId;
+    }
+  }
 
   @override
   void dispose() {
@@ -34,19 +51,30 @@ class _DailySheetCreateDialogState
   Widget build(BuildContext context) {
     final branches = ref.watch(branchesProvider);
     final employees = ref.watch(employeesProvider(_branchId));
-    return AlertDialog(
-      title: Text(tr(
-          context, 'إنشاء ورقة مشتريات يومية', 'Create daily purchase sheet')),
+    return PopScope(
+      canPop: !_saving,
+      child: AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      title: Text(widget.existing == null
+          ? tr(context, 'إنشاء ورقة مشتريات يومية', 'Create daily purchase sheet')
+          : tr(context, 'تعديل بيانات المسودة', 'Edit draft sheet')),
       content: SizedBox(
         width: MediaQuery.sizeOf(context).width > 620
             ? 520
-            : MediaQuery.sizeOf(context).width * .84,
+            : MediaQuery.sizeOf(context).width - 80,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (_lockIdentity) ...[
+                Text(tr(context,
+                    'تحتوي الورقة على عمليات؛ يمكن تغيير الملاحظات فقط حفاظاً على سلامة القيود المالية.',
+                    'This sheet has purchase history; only notes can be edited to protect accounting records.')),
+                const SizedBox(height: 10),
+              ],
               TextFormField(
                 controller: _date,
+                enabled: !_lockIdentity,
                 readOnly: true,
                 decoration: InputDecoration(
                   labelText: tr(context, 'تاريخ الورقة', 'Sheet date'),
@@ -60,7 +88,9 @@ class _DailySheetCreateDialogState
                 error: (error, stack) => Text(tr(
                     context, 'تعذر تحميل الفروع', 'Could not load branches')),
                 data: (items) => DropdownButtonFormField<int?>(
+                  key: ValueKey('branch-${_branchId ?? 'none'}'),
                   initialValue: _branchId,
+                  isExpanded: true,
                   decoration: InputDecoration(
                       labelText: tr(context, 'الفرع', 'Branch')),
                   items: [
@@ -70,10 +100,11 @@ class _DailySheetCreateDialogState
                     ),
                     ...items.map((item) => DropdownMenuItem<int?>(
                           value: item['id'] as int,
-                          child: Text(item['name'] as String),
+                          child: Text(item['name'] as String,
+                              overflow: TextOverflow.ellipsis),
                         )),
                   ],
-                  onChanged: (value) => setState(() {
+                  onChanged: _lockIdentity ? null : (value) => setState(() {
                     _branchId = value;
                     _employeeId = null;
                   }),
@@ -85,7 +116,9 @@ class _DailySheetCreateDialogState
                 error: (error, stack) => Text(tr(context, 'تعذر تحميل الموظفين',
                     'Could not load employees')),
                 data: (items) => DropdownButtonFormField<int?>(
+                  key: ValueKey('employee-${_employeeId ?? 'none'}'),
                   initialValue: _employeeId,
+                  isExpanded: true,
                   decoration: InputDecoration(
                       labelText:
                           tr(context, 'مسؤول المشتريات', 'Purchasing officer')),
@@ -96,10 +129,12 @@ class _DailySheetCreateDialogState
                     ),
                     ...items.map((item) => DropdownMenuItem<int?>(
                           value: item['id'] as int,
-                          child: Text(item['name'] as String),
+                          child: Text(item['name'] as String,
+                              overflow: TextOverflow.ellipsis),
                         )),
                   ],
-                  onChanged: (value) => setState(() => _employeeId = value),
+                  onChanged: _lockIdentity ? null :
+                      (value) => setState(() => _employeeId = value),
                 ),
               ),
               const SizedBox(height: 9),
@@ -125,10 +160,12 @@ class _DailySheetCreateDialogState
         ),
         FilledButton(
           onPressed: _saving ? null : _save,
-          child: Text(tr(context, 'إنشاء الورقة', 'Create sheet')),
+          child: Text(widget.existing == null
+              ? tr(context, 'إنشاء الورقة', 'Create sheet')
+              : tr(context, 'حفظ التعديلات', 'Save changes')),
         ),
       ],
-    );
+    ));
   }
 
   Future<void> _pickDate() async {
@@ -139,6 +176,7 @@ class _DailySheetCreateDialogState
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
     );
+    if (!mounted) return;
     if (picked != null) {
       _date.text =
           '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
@@ -146,6 +184,7 @@ class _DailySheetCreateDialogState
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(_date.text.trim()) ||
         DateTime.tryParse(_date.text.trim()) == null) {
       setState(
@@ -157,12 +196,27 @@ class _DailySheetCreateDialogState
       _error = null;
     });
     try {
-      final id = await ref.read(dailyPurchasesRepositoryProvider).createSheet(
-            purchaseDate: _date.text.trim(),
-            branchId: _branchId,
-            employeeId: _employeeId,
-            notes: _notes.text,
-          );
+      final repository = ref.read(dailyPurchasesRepositoryProvider);
+      final sheet = widget.existing;
+      final int id;
+      if (sheet == null) {
+        id = await repository.createSheet(
+          purchaseDate: _date.text.trim(),
+          branchId: _branchId,
+          employeeId: _employeeId,
+          notes: _notes.text,
+        );
+      } else {
+        await repository.updateDraftSheet(
+          sheetId: sheet.id,
+          purchaseDate: _date.text.trim(),
+          branchId: _branchId,
+          employeeId: _employeeId,
+          notes: _notes.text,
+        );
+        id = sheet.id;
+        ref.invalidate(dailySheetDetailProvider(sheet.id));
+      }
       // Notify any other sheet list before closing this route.
       ref.invalidate(dailySheetsProvider);
       if (mounted) Navigator.pop(context, id);

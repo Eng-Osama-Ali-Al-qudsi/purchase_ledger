@@ -9,6 +9,10 @@ class AboutDeveloperScreen extends StatelessWidget {
   static const phone = '780155801';
   static const internationalPhone = '+967780155801';
   static const email = 'engosamaali7@gmail.com';
+  static const whatsappMessage =
+      'السلام عليكم، المهندس أسامة القدسي. كنت أتصفح تطبيقك (إدارة المشتريات والحسابات) وأرغب في الاستفسار عن...';
+  static const whatsappMessageEn =
+      'Hello Eng. Osama Al-Qudsi. I was browsing your app (Purchase and Accounts Management) and would like to ask about...';
 
   Future<void> _open(BuildContext context, Uri uri) async {
     try {
@@ -30,7 +34,7 @@ class AboutDeveloperScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text(tr(context, 'عن المطور', 'About developer'))),
+        appBar: AppBar(title: Text(tr(context, 'عن المطور', 'About the Developer'))),
         body: SafeArea(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -45,12 +49,13 @@ class AboutDeveloperScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 15),
-              Text('المهندس أسامة علي القدسي',
+              Text(tr(context, 'المهندس أسامة علي القدسي',
+                  'Eng. Osama Ali Al-Qudsi'),
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w900)),
               const SizedBox(height: 3),
-              Text(tr(context, 'مطور التطبيق', 'Application developer'),
+              Text(tr(context, 'مطور التطبيق', 'Application Developer'),
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 16),
@@ -58,7 +63,9 @@ class AboutDeveloperScreen extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(17),
                   child: Text(
-                    'يهتم المهندس أسامة علي القدسي بتطوير حلول برمجية عملية تسهّل تنظيم الأعمال وإدارة عمليات المشتريات والحسابات، مع التركيز على وضوح المعلومات وسهولة الاستخدام ودقة السجلات.',
+                    tr(context,
+                      'مهندس برمجيات ومطور حلول تقنية متكاملة. يهدف إلى بناء تطبيقات وأنظمة رقمية عالية الأداء تتميز بسهولة الاستخدام، الأمان العالي، والتصميم العصري لتلبية احتياجات الأفراد والشركات بكفاءة واحترافية.',
+                      'Software Engineer and Integrated Technology Solutions Developer. Dedicated to building high-performance applications and digital systems that combine ease of use, strong security, and modern design to meet the needs of individuals and businesses efficiently and professionally.'),
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
                 ),
@@ -85,8 +92,10 @@ class AboutDeveloperScreen extends StatelessWidget {
                       title: const Text('WhatsApp'),
                       subtitle: const Text(phone, textDirection: TextDirection.ltr),
                       trailing: const Icon(Icons.open_in_new, size: 18),
-                      onTap: () => _open(
-                          context, Uri.parse('https://wa.me/967780155801')),
+                      onTap: () => _open(context, Uri.https(
+                          'wa.me', '/967780155801', {'text':
+                            Localizations.localeOf(context).languageCode == 'ar'
+                              ? whatsappMessage : whatsappMessageEn})),
                     ),
                     const Divider(height: 1),
                     ListTile(

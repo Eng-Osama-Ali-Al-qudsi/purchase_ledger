@@ -59,7 +59,11 @@ class _DailyOutstandingScreenState
   }
 
   void _refresh() {
-    setState(() => _future = _load());
+    final pending = _load();
+    if (!mounted) return;
+    setState(() {
+      _future = pending;
+    });
     ref.invalidate(dailyOutstandingRecordsProvider);
   }
 
@@ -72,7 +76,7 @@ class _DailyOutstandingScreenState
         title: Text(
             tr(context, 'سجل المستحقات اليومية', 'Daily outstanding ledger')),
       ),
-      body: Column(
+      body: SafeArea(top: false, child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
@@ -275,7 +279,7 @@ class _DailyOutstandingScreenState
             ),
           ),
         ],
-      ),
+      )),
     );
   }
 

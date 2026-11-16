@@ -8,7 +8,9 @@ import '../../../core/utils/money.dart';
 import 'business_profile_dialog.dart';
 
 class DashboardScreen extends ConsumerWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({super.key, this.onNavigate});
+
+  final void Function(int index, {required bool overdueOnly})? onNavigate;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -61,24 +63,28 @@ class DashboardScreen extends ConsumerWidget {
                   label: tr(context, 'الموردون', 'Suppliers'),
                   value: '${data.supplierCount}',
                   tint: AppTheme.teal,
+                  onTap: () => onNavigate?.call(1, overdueOnly: false),
                 ),
                 _MetricCard(
                   icon: Icons.receipt_long_outlined,
                   label: tr(context, 'الفواتير الآجلة', 'Credit invoices'),
                   value: '${data.invoiceCount}',
                   tint: AppTheme.navy,
+                  onTap: () => onNavigate?.call(2, overdueOnly: false),
                 ),
                 _MetricCard(
                   icon: Icons.event_busy_outlined,
                   label: tr(context, 'فواتير متأخرة', 'Overdue invoices'),
                   value: '${data.overdueInvoiceCount}',
                   tint: AppTheme.danger,
+                  onTap: () => onNavigate?.call(2, overdueOnly: true),
                 ),
                 _MetricCard(
                   icon: Icons.shopping_basket_outlined,
                   label: tr(context, 'عمليات يومية', 'Daily purchases'),
                   value: '${data.dailyPurchaseCount}',
                   tint: AppTheme.emerald,
+                  onTap: () => onNavigate?.call(3, overdueOnly: false),
                 ),
               ],
             ),
@@ -248,15 +254,20 @@ class _MetricCard extends StatelessWidget {
       {required this.icon,
       required this.label,
       required this.value,
-      required this.tint});
+      required this.tint,
+      this.onTap});
   final IconData icon;
   final String label;
   final String value;
   final Color tint;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
           padding: const EdgeInsets.all(13),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -274,6 +285,7 @@ class _MetricCard extends StatelessWidget {
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant)),
             ],
+          ),
           ),
         ),
       );

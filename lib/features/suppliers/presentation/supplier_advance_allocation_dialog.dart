@@ -39,12 +39,13 @@ class _SupplierAdvanceAllocationDialogState
     final invoicesAsync =
         ref.watch(supplierInvoicesProvider(widget.supplier.id));
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
       title:
           Text(tr(context, 'تخصيص الرصيد المقدم', 'Allocate supplier advance')),
       content: SizedBox(
         width: MediaQuery.sizeOf(context).width > 620
             ? 560
-            : MediaQuery.sizeOf(context).width * .84,
+            : MediaQuery.sizeOf(context).width - 72,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -77,6 +78,7 @@ class _SupplierAdvanceAllocationDialogState
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       DropdownButtonFormField<int>(
+                        isExpanded: true,
                         initialValue: _paymentId,
                         decoration: InputDecoration(
                           labelText: tr(
@@ -166,9 +168,10 @@ class _SupplierAdvanceAllocationDialogState
       margin: const EdgeInsets.only(bottom: 6),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        child: Row(
-          children: [
-            Checkbox(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final narrow = constraints.maxWidth < 370;
+            final check = Checkbox(
               value: selected,
               onChanged: (value) => setState(() {
                 if (value == true) {
@@ -178,9 +181,8 @@ class _SupplierAdvanceAllocationDialogState
                   controller.clear();
                 }
               }),
-            ),
-            Expanded(
-              child: Column(
+            );
+            final description = Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('#${invoice.invoiceNumber}',
@@ -190,11 +192,8 @@ class _SupplierAdvanceAllocationDialogState
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
-              ),
-            ),
-            SizedBox(
-              width: 118,
-              child: TextField(
+              );
+            final input = TextField(
                 controller: controller,
                 enabled: selected,
                 keyboardType:
@@ -203,9 +202,25 @@ class _SupplierAdvanceAllocationDialogState
                   isDense: true,
                   hintText: tr(context, 'المبلغ', 'Amount'),
                 ),
-              ),
-            ),
-          ],
+              );
+            if (narrow) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(children: [check, Expanded(child: description)]),
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(start: 12, end: 12, bottom: 7),
+                    child: input,
+                  ),
+                ],
+              );
+            }
+            return Row(children: [
+              check,
+              Expanded(child: description),
+              SizedBox(width: 112, child: input),
+            ]);
+          },
         ),
       ),
     );
