@@ -43,6 +43,7 @@ class _DailySheetContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final totals = _totals(sheet.operations);
+    final hasPurchases = sheet.operations.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
         title: Text(sheet.sheetNumber,
@@ -50,32 +51,38 @@ class _DailySheetContent extends ConsumerWidget {
         actions: [
           IconButton(
             tooltip: tr(context, 'مشاركة تقرير PDF', 'Share handover PDF'),
-            onPressed: () => _shareReport(context, ref),
+            onPressed: hasPurchases ? () => _shareReport(context, ref) : null,
             icon: const Icon(Icons.share_outlined),
           ),
           IconButton(
             tooltip: tr(context, 'طباعة التقرير', 'Print report'),
-            onPressed: () => _printReport(context, ref),
+            onPressed: hasPurchases ? () => _printReport(context, ref) : null,
             icon: const Icon(Icons.print_outlined),
           ),
           IconButton(
             tooltip: tr(context, 'تصدير CSV', 'Export CSV'),
-            onPressed: () => _shareCsv(context, ref),
+            onPressed: hasPurchases ? () => _shareCsv(context, ref) : null,
             icon: const Icon(Icons.table_view_outlined),
           ),
         ],
       ),
-      floatingActionButton: sheet.isEditable
-          ? FloatingActionButton.extended(
-              onPressed: () => _addOperation(context, ref),
-              icon: const Icon(Icons.add),
-              label: Text(tr(context, 'إضافة عملية', 'Add operation')),
+      bottomNavigationBar: sheet.isEditable
+          ? SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: FilledButton.icon(
+                  onPressed: () => _addOperation(context, ref),
+                  icon: const Icon(Icons.add),
+                  label: Text(tr(context, 'إضافة عملية', 'Add operation')),
+                ),
+              ),
             )
           : null,
-      body: RefreshIndicator(
+      body: SafeArea(top: false, child: RefreshIndicator(
         onRefresh: () async => _refresh(ref),
         child: ListView(
-          padding: EdgeInsets.fromLTRB(13, 10, 13, 150 + MediaQuery.paddingOf(context).bottom),
+          padding: const EdgeInsets.fromLTRB(13, 10, 13, 24),
           children: [
             _sheetHeader(context),
             const SizedBox(height: 10),
@@ -140,7 +147,7 @@ class _DailySheetContent extends ConsumerWidget {
             ],
           ],
         ),
-      ),
+      )),
     );
   }
 
@@ -681,29 +688,37 @@ class _DailySheetContent extends ConsumerWidget {
       context: context,
       builder: (dialogContext) => AlertDialog(
         scrollable: true,
-        title: const Text('إلغاء عملية شراء'),
+        title: Text(tr(context, 'إلغاء عملية شراء', 'Void purchase operation')),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('سيتم عكس أثر العملية على حساب المورد إن كانت آجلة، '
-            'مع الاحتفاظ بأصل المستند وأثر الإلغاء. قيمة العملية: '
-            '${Money.format(operation.totalMinor, operation.currency)}'),
+          Text('${tr(context, 'رقم العملية', 'Operation')}: ${operation.operationNumber}\n'
+            '${tr(context, 'طريقة الشراء', 'Purchase type')}: '
+            '${operation.isSupplierAccount ? tr(context, 'آجل', 'Credit') :
+              operation.recordingCategory == 'cash' ? tr(context, 'نقدي', 'Cash') :
+              tr(context, 'مستحق يومي', 'Daily outstanding')}\n'
+            '${tr(context, 'المورد', 'Supplier')}: ${operation.supplierName ?? '—'}\n'
+            '${tr(context, 'القيمة', 'Amount')}: '
+            '${Money.format(operation.totalMinor, operation.currency, locale: Localizations.localeOf(context).languageCode)}\n\n'
+            '${tr(context,
+              'سيُعكس الأثر المالي المسموح به مع حفظ المستند وسجل الإلغاء. العمليات ذات تسويات لاحقة قد تُمنع حفاظاً على الرصيد.',
+              'Eligible financial entries will be reversed while preserving the source and audit trail. Linked settlements may block voiding.')}'),
           const SizedBox(height: 8),
           TextField(
             maxLines: 2,
             onChanged: (value) => reasonInput = value,
-            decoration: const InputDecoration(labelText: 'سبب الإلغاء *'),
+            decoration: InputDecoration(labelText: tr(context, 'سبب الإلغاء *', 'Reason *')),
           ),
         ]),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('رجوع'),
+            child: Text(tr(context, 'رجوع', 'Back')),
           ),
           FilledButton(
             onPressed: () {
               if (reasonInput.trim().isEmpty) return;
               Navigator.pop(dialogContext, reasonInput.trim());
             },
-            child: const Text('تأكيد الإلغاء'),
+            child: Text(tr(context, 'تأكيد الإلغاء', 'Confirm void')),
           ),
         ],
       ),
@@ -899,9 +914,9 @@ class _DailySheetContent extends ConsumerWidget {
                       title: Text(_eventLabel(context, event.eventType),
                           style: const TextStyle(fontWeight: FontWeight.w800)),
                       subtitle: Text([
-                        _friendlyDate(event.createdAt),
+                        _friendlyDate(context, event.createdAt),
                         if (event.fromStatus != null || event.toStatus != null)
-                          '${_friendlyStatus(event.fromStatus)} → ${_friendlyStatus(event.toStatus)}',
+                          '${_friendlyStatus(context, event.fromStatus)} → ${_friendlyStatus(context, event.toStatus)}',
                       ].join(' • ')),
                       children: [
                         if (event.detailsJson != null)
@@ -910,10 +925,20 @@ class _DailySheetContent extends ConsumerWidget {
                             child: Align(
                               alignment: AlignmentDirectional.centerStart,
                               child: SelectableText(
-                                _friendlyEventDetails(event.detailsJson!),
+                                _friendlyEventDetails(context, event.detailsJson!),
                                 textAlign: TextAlign.start,
                               ),
                             ),
+                          ),
+                        if (event.detailsJson != null)
+                          ExpansionTile(
+                            title: Text(tr(context, 'البيانات الخام للتدقيق',
+                                'Raw audit data')),
+                            children: [Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: SelectableText(event.detailsJson!,
+                                  textDirection: TextDirection.ltr),
+                            )],
                           ),
                       ],
                     );
@@ -930,31 +955,32 @@ class _DailySheetContent extends ConsumerWidget {
     );
   }
 
-  String _friendlyDate(String original) {
+  String _friendlyDate(BuildContext context, String original) {
     final value = DateTime.tryParse(original);
     if (value == null) return original;
     final local = value.toLocal();
-    return '${local.year}-${local.month.toString().padLeft(2, '0')}-'
-      '${local.day.toString().padLeft(2, '0')} '
-      '${local.hour.toString().padLeft(2, '0')}:'
-      '${local.minute.toString().padLeft(2, '0')}';
+    final material = MaterialLocalizations.of(context);
+    if (original.length <= 10) return material.formatFullDate(local);
+    return '${material.formatFullDate(local)} — '
+        '${material.formatTimeOfDay(TimeOfDay.fromDateTime(local))}';
   }
 
-  String _friendlyStatus(String? status) => switch (status) {
-    'DRAFT' => 'مسودة',
-    'READY_FOR_HANDOVER' => 'جاهزة للتسليم',
-    'HANDED_OVER' => 'تم التسليم',
-    'CLOSED' => 'مغلقة',
-    'posted' => 'مرحّلة',
-    'void' => 'ملغاة',
-    'paid' => 'مسددة',
-    'partial' => 'مسددة جزئياً',
-    'open' => 'مفتوحة',
+  String _friendlyStatus(BuildContext context, String? status) => switch (status) {
+    'DRAFT' => tr(context, 'مسودة', 'Draft'),
+    'READY_FOR_HANDOVER' => tr(context, 'جاهزة للتسليم', 'Ready for handover'),
+    'HANDED_OVER' => tr(context, 'تم التسليم', 'Handed over'),
+    'CLOSED' => tr(context, 'مغلقة', 'Closed'),
+    'ARCHIVED' => tr(context, 'مؤرشفة', 'Archived'),
+    'posted' => tr(context, 'مرحّلة', 'Posted'),
+    'void' => tr(context, 'ملغاة', 'Voided'),
+    'paid' => tr(context, 'مسددة', 'Paid'),
+    'partial' => tr(context, 'مسددة جزئياً', 'Partially paid'),
+    'open' => tr(context, 'مفتوحة', 'Open'),
     null => '—',
     _ => status,
   };
 
-  String _friendlyEventDetails(String raw) {
+  String _friendlyEventDetails(BuildContext context, String raw) {
     const labels = <String, String>{
       'sheet_number': 'رقم الورقة', 'operation_id': 'رقم العملية',
       'operation_number': 'مرجع العملية', 'accounting_mode': 'طريقة المحاسبة',
@@ -972,6 +998,29 @@ class _DailySheetContent extends ConsumerWidget {
       'signed_delta_minor': 'التغير في المستحق',
       'amendment_id': 'رقم الملحق', 'amendment_number': 'مرجع الملحق',
       'currency': 'العملة', 'payment_method': 'وسيلة الدفع',
+      'purchase_date': 'تاريخ الورقة', 'branch_id': 'الفرع',
+      'employee_id': 'مسؤول المشتريات', 'notes': 'الملاحظات',
+      'before': 'قبل التعديل', 'after': 'بعد التعديل',
+    };
+    const labelsEn = <String, String>{
+      'sheet_number':'Sheet number', 'operation_id':'Operation number',
+      'operation_number':'Operation reference', 'accounting_mode':'Accounting method',
+      'recording_category':'Purchase category', 'responsible_person_name':'Account holder',
+      'total_minor':'Operation total', 'paid_minor':'Paid amount',
+      'old_total_minor':'Previous total', 'new_total_minor':'New total',
+      'old_payment_method':'Previous payment method',
+      'new_payment_method':'New payment method',
+      'reason':'Reason', 'amount_minor':'Amount', 'amount_delta_minor':'Difference',
+      'outstanding_id':'Outstanding number', 'status':'Status',
+      'from_status':'Previous status', 'to_status':'New status',
+      'responsible_person_id':'Person account number',
+      'payment_date':'Payment date', 'changed_at':'Change time',
+      'adjustment_id':'Adjustment number', 'adjustment_type':'Adjustment type',
+      'signed_delta_minor':'Outstanding change', 'amendment_id':'Addendum number',
+      'amendment_number':'Addendum reference', 'currency':'Currency',
+      'payment_method':'Payment method', 'purchase_date':'Sheet date',
+      'branch_id':'Branch', 'employee_id':'Purchasing officer',
+      'notes':'Notes', 'before':'Before change', 'after':'After change',
     };
     const values = <String, String>{
       'daily_outstanding':'مستحق يومي', 'supplier_account':'حساب مورد',
@@ -981,23 +1030,44 @@ class _DailySheetContent extends ConsumerWidget {
       'return':'مرتجع', 'adjustment':'تسوية', 'write_off':'شطب معتمد',
       'correction':'تصحيح', 'other':'أخرى',
     };
+    const valuesEn = <String, String>{
+      'daily_outstanding':'Daily outstanding', 'supplier_account':'Supplier account',
+      'cash':'Cash', 'supplier':'Supplier', 'independent':'Independent',
+      'person':'Personal account', 'bank_transfer':'Bank transfer',
+      'wallet':'Wallet', 'cheque':'Cheque', 'unspecified':'Unspecified',
+      'return':'Return', 'adjustment':'Adjustment', 'write_off':'Approved write-off',
+      'correction':'Correction', 'other':'Other',
+    };
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! Map) return 'تفاصيل الحدث محفوظة في السجل الأصلي.';
-      var extraIndex = 0;
-      return decoded.entries.map((entry) {
+      if (decoded is! Map) return tr(context,
+          'تفاصيل الحدث محفوظة في السجل الأصلي.',
+          'The event details are preserved in the original audit record.');
+      final locale = Localizations.localeOf(context).languageCode;
+      final currency = decoded['currency'] is String
+          ? decoded['currency'] as String : null;
+      String displayDetails(Map valuesMap) => valuesMap.entries.map((entry) {
         final key = entry.key.toString();
         final value = entry.value;
-        if (!labels.containsKey(key)) extraIndex++;
-        final readable = values['$value'] ??
+        final readable = (locale == 'ar' ? values : valuesEn)['$value'] ??
             (key.endsWith('_status') || key == 'status'
-                ? _friendlyStatus('$value') : '$value');
-        final display = key.endsWith('_minor') && value is int
-            ? Money.format(value, '', locale: 'ar').trim() : readable;
-        return '${labels[key] ?? 'بيان إضافي $extraIndex'}: $display';
+                ? _friendlyStatus(context, '$value') : '$value');
+        final display = value is Map
+            ? '\n${displayDetails(value)}'
+            : (key.endsWith('_minor') && value is int
+                ? Money.format(value, currency ?? '', locale: locale).trim() :
+                  value is String && (key.endsWith('_date') || key.endsWith('_at'))
+                    ? _friendlyDate(context, value) :
+                  value == null ? tr(context, 'غير محدد', 'Unspecified') : readable);
+        final label = (locale == 'ar' ? labels : labelsEn)[key] ??
+            tr(context, 'حقل غير معروف ($key)', 'Unknown field ($key)');
+        return '$label: $display';
       }).join('\n');
+      return displayDetails(decoded);
     } catch (_) {
-      return 'تعذر تنسيق تفاصيل هذا الحدث، ويبقى سجله الأصلي محفوظاً.';
+      return tr(context,
+          'تعذر تنسيق تفاصيل هذا الحدث، ويبقى سجله الأصلي محفوظاً.',
+          'Could not format this event; the original record remains preserved.');
     }
   }
 
@@ -1021,6 +1091,10 @@ class _DailySheetContent extends ConsumerWidget {
         return tr(context, 'تغيير حالة الورقة', 'Sheet status changed');
       case 'amendment_created':
         return tr(context, 'إضافة ملحق تصحيحي', 'Correction addendum added');
+      case 'metadata_edited':
+        return tr(context, 'تعديل بيانات المسودة', 'Draft details edited');
+      case 'archived':
+        return tr(context, 'أرشفة المسودة', 'Draft archived');
       default:
         return tr(context, 'تغيير آخر في الورقة', 'Other sheet event');
     }

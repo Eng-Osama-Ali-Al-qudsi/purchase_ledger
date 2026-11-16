@@ -7,6 +7,7 @@ import 'purchase_ledger_v4_migration.dart';
 import 'purchase_ledger_v5_migration.dart';
 import 'purchase_ledger_v6_migration.dart';
 import 'purchase_ledger_v7_migration.dart';
+import 'purchase_ledger_v8_migration.dart';
 
 /// SQLite database for the offline-first application.
 /// Monetary values are stored as integer minor units (1/100 of a currency unit).
@@ -36,7 +37,7 @@ class AppDatabase {
     final root = await getDatabasesPath();
     final db = await openDatabase(
       p.join(root, 'purchase_ledger.db'),
-      version: 7,
+      version: 8,
       onConfigure: (database) async {
         await database.execute('PRAGMA foreign_keys = ON');
         await database.execute('PRAGMA journal_mode = WAL');
@@ -450,6 +451,7 @@ class AppDatabase {
     await PurchaseLedgerV5Migration.apply(db);
     await PurchaseLedgerV6Migration.apply(db);
     await PurchaseLedgerV7Migration.apply(db);
+    await PurchaseLedgerV8Migration.apply(db);
   }
 
   Future<void> _upgrade(Database db, int oldVersion, int newVersion) async {
@@ -470,6 +472,9 @@ class AppDatabase {
     }
     if (oldVersion < 7) {
       await PurchaseLedgerV7Migration.apply(db);
+    }
+    if (oldVersion < 8) {
+      await PurchaseLedgerV8Migration.apply(db);
     }
   }
 

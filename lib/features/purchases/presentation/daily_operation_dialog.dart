@@ -38,6 +38,7 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
   String _paymentMethod = 'cash';
   AttachmentDraft? _attachment;
   bool _saving = false;
+  bool _showAdvancedOptions = false;
   String? _error;
   late final String _idempotencyKey;
 
@@ -80,7 +81,9 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
     final fullyPaid = _mode == 'cash' ||
         (_mode == 'daily_outstanding' && _independentPayment == 'cash');
     return AlertDialog(
-      title: Text(_isEditing ? 'تعديل أصناف العملية' : 'إضافة عملية شراء'),
+      title: Text(_isEditing
+          ? tr(context, 'تعديل أصناف العملية', 'Edit purchase items')
+          : tr(context, 'إضافة عملية شراء', 'Add purchase')),
       content: SizedBox(
         width: MediaQuery.sizeOf(context).width > 760
             ? 700 : MediaQuery.sizeOf(context).width * .86,
@@ -91,20 +94,51 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (_isEditing)
+                if (_isEditing) ...[
                   Text('${widget.operation!.operationNumber} • ${widget.operation!.currency}',
-                    style: const TextStyle(fontWeight: FontWeight.w900))
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 7),
+                  Text(widget.operation!.isSupplierAccount
+                      ? tr(context, 'شراء آجل على حساب المورد: ${widget.operation!.supplierName ?? '—'}',
+                          'Supplier credit purchase: ${widget.operation!.supplierName ?? '—'}')
+                      : widget.operation!.recordingCategory == 'cash'
+                          ? tr(context, 'شراء نقدي مدفوع بالكامل', 'Fully paid cash purchase')
+                          : tr(context, 'عملية بمستحق يومي أو حساب شخص',
+                              'Daily outstanding or personal account')),
+                  const SizedBox(height: 6),
+                  Text(tr(context,
+                    'يمكن تصحيح الأصناف والسعر هنا؛ تغيير المورد أو نوع القيد المالي يتطلب إلغاء العملية المحفوظة بصورة محاسبية آمنة وتسجيل العملية الصحيحة.',
+                    'Items and prices can be corrected here. Changing the supplier or accounting type requires safely voiding the saved purchase and recording the correct one.'),
+                    style: Theme.of(context).textTheme.bodySmall),
+                ]
                 else ...[
                   DropdownButtonFormField<String>(
                     initialValue: _mode,
-                    decoration: const InputDecoration(labelText: 'نوع العملية'),
-                    items: const [
-                      DropdownMenuItem(value: 'cash', child: Text('شراء نقدي بالكامل')),
-                      DropdownMenuItem(value: 'supplier_account', child: Text('شراء آجل من مورد مسجل')),
-                      DropdownMenuItem(value: 'person_account', child: Text('شراء على حساب شخص')),
-                      DropdownMenuItem(value: 'daily_outstanding', child: Text('مستحق يومي مستقل')),
+                    decoration: InputDecoration(labelText: tr(context, 'طريقة الشراء', 'Purchase type')),
+                    isExpanded: true,
+                    items: [
+                      DropdownMenuItem(value: 'cash', child: Text(tr(context,
+                          'نقدي — مدفوع بالكامل', 'Cash — fully paid'))),
+                      DropdownMenuItem(value: 'supplier_account', child: Text(tr(context,
+                          'آجل — على حساب مورد', 'Credit — supplier account'))),
+                      if (_showAdvancedOptions || _mode == 'person_account')
+                        DropdownMenuItem(value: 'person_account', child: Text(tr(context,
+                            'شراء على حساب شخص', 'Personal account'))),
+                      if (_showAdvancedOptions || _mode == 'daily_outstanding')
+                        DropdownMenuItem(value: 'daily_outstanding', child: Text(tr(context,
+                            'مستحق يومي مستقل', 'Independent outstanding'))),
                     ],
                     onChanged: (v) => setState(() { _mode = v ?? 'cash'; _supplierId = null; }),
+                  ),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton.icon(
+                      onPressed: () => setState(() => _showAdvancedOptions = !_showAdvancedOptions),
+                      icon: Icon(_showAdvancedOptions ? Icons.expand_less : Icons.tune),
+                      label: Text(_showAdvancedOptions
+                          ? tr(context, 'إخفاء الخيارات الأخرى', 'Hide other options')
+                          : tr(context, 'خيارات محاسبية أخرى', 'Other accounting options')),
+                    ),
                   ),
                   if (_mode == 'daily_outstanding') ...[
                     const SizedBox(height: 8),
@@ -266,7 +300,7 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
     final units = ref.watch(dailyMeasurementUnitsProvider);
     return units.when(
       loading: () => const LinearProgressIndicator(),
-      error: (_, __) => const Text('تعذر تحميل الوحدات'),
+      error: (_, __) => Text(tr(context, 'تعذر تحميل الوحدات', 'Could not load units')),
       data: (rows) {
         final names = rows.map((r) => r['name'] as String).toList();
         final selected = names.contains(line.unit.text) ? line.unit.text : null;
@@ -275,14 +309,22 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
             key: ValueKey('daily-unit-${line.hashCode}-$selected'),
             initialValue: selected,
             isExpanded: true,
-            decoration: const InputDecoration(labelText: 'الوحدة'),
+            decoration: InputDecoration(labelText: tr(context, 'الوحدة *', 'Unit *')),
             items: names.map((name) => DropdownMenuItem(
               value: name, child: Text(name, overflow: TextOverflow.ellipsis),
             )).toList(),
             onChanged: (value) => setState(() => line.unit.text = value ?? ''),
-            validator: (_) => line.unit.text.trim().isEmpty ? 'الوحدة مطلوبة' : null,
+            validator: (_) => line.unit.text.trim().isEmpty
+                ? tr(context, 'الوحدة مطلوبة', 'Unit is required') : null,
           ),
-          TextButton(onPressed: () => _addUnit(line), child: const Text('وحدة جديدة +')),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TextButton.icon(
+              onPressed: _saving ? null : () => _addUnit(line),
+              icon: const Icon(Icons.add_circle_outline),
+              label: Text(tr(context, 'إضافة وحدة جديدة', 'Add a new unit')),
+            ),
+          ),
         ]);
       },
     );
@@ -292,13 +334,14 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
     var proposed = '';
     final value = await showDialog<String>(context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('إضافة وحدة يومية'),
+        title: Text(tr(context, 'إضافة وحدة يومية', 'Add daily-purchase unit')),
         content: TextField(autofocus: true, onChanged: (text) => proposed = text,
-          decoration: const InputDecoration(labelText: 'اسم الوحدة')),
+          decoration: InputDecoration(labelText: tr(context, 'اسم الوحدة', 'Unit name'))),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext),
+            child: Text(tr(context, 'إلغاء', 'Cancel'))),
           FilledButton(onPressed: () => Navigator.pop(dialogContext, proposed.trim()),
-            child: const Text('إضافة')),
+            child: Text(tr(context, 'إضافة', 'Add'))),
         ],
       ),
     );
@@ -308,7 +351,8 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
       ref.invalidate(dailyMeasurementUnitsProvider);
       if (mounted) setState(() => line.unit.text = value.trim());
     } catch (error) {
-      if (mounted) setState(() => _error = 'تعذر حفظ الوحدة: $error');
+      if (mounted) setState(() => _error =
+          '${tr(context, 'تعذر حفظ الوحدة', 'Could not save unit')}: $error');
     }
   }
 
@@ -318,6 +362,7 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
     AsyncValue<List<Map<String, Object?>>> categoriesAsync,
   ) {
     return Card(
+      key: ObjectKey(line),
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
         padding: const EdgeInsets.all(9),
@@ -332,8 +377,12 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
                 if (_lines.length > 1)
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    onPressed: () =>
-                        setState(() => _lines.removeAt(index).dispose()),
+                    onPressed: () => setState(() {
+                      final removed = _lines.removeAt(index);
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        removed.dispose();
+                      });
+                    }),
                     icon: const Icon(Icons.delete_outline,
                         color: Colors.redAccent),
                   ),
@@ -369,33 +418,23 @@ class _DailyOperationDialogState extends ConsumerState<DailyOperationDialog> {
               ),
             ),
             const SizedBox(height: 7),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: line.quantity,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: InputDecoration(
-                        labelText: tr(context, 'الكمية', 'Quantity')),
-                    validator: _quantityValidator,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: TextFormField(
-                    controller: line.price,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: InputDecoration(
-                        labelText: tr(context, 'سعر الوحدة', 'Unit price')),
-                    validator: _moneyValidator,
-                  ),
-                ),
-              ],
+            _dailyUnitSelector(line),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: line.quantity,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(labelText: tr(context, 'الكمية', 'Quantity')),
+              validator: _quantityValidator,
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 8),
-            _dailyUnitSelector(line),
+            TextFormField(
+              controller: line.price,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(labelText: tr(context, 'سعر الوحدة', 'Unit price')),
+              validator: _moneyValidator,
+              onChanged: (_) => setState(() {}),
+            ),
           ],
         ),
       ),

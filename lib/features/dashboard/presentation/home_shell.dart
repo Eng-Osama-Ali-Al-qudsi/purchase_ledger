@@ -2,10 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/localization/app_strings.dart';
-import '../../../core/settings/app_settings.dart';
-import '../../../app/providers.dart';
-import 'business_profile_dialog.dart';
-import 'business_directory_screen.dart';
 import 'dashboard_screen.dart';
 import 'app_settings_screen.dart';
 import '../../purchases/presentation/credit_invoices_screen.dart';
@@ -21,18 +17,25 @@ class HomeShell extends ConsumerStatefulWidget {
 
 class _HomeShellState extends ConsumerState<HomeShell> {
   int _index = 0;
-  // Preserve each tab's State (scroll position, form state and loaded results)
-  // when selecting a different destination or changing the app theme.
-  final List<Widget> _pages = const [
-    DashboardScreen(),
-    SuppliersScreen(),
-    CreditInvoicesScreen(),
-    DailyPurchasesScreen(),
-    AppSettingsScreen(),
-  ];
+  bool _overdueOnly = false;
+
+  void _navigateFromDashboard(int index, {bool overdueOnly = false}) {
+    setState(() {
+      _index = index;
+      _overdueOnly = index == 2 && overdueOnly;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    // An IndexedStack retains the Stateful tab elements across rebuilds.
+    final pages = <Widget>[
+      DashboardScreen(onNavigate: _navigateFromDashboard),
+      const SuppliersScreen(),
+      CreditInvoicesScreen(overdueOnly: _overdueOnly),
+      const DailyPurchasesScreen(),
+      const AppSettingsScreen(),
+    ];
     final titles = [
       tr(context, 'لوحة التحكم', 'Dashboard'),
       tr(context, 'الموردون', 'Suppliers'),
@@ -56,54 +59,16 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ),
           ],
         ),
-        actions: [
-          PopupMenuButton<String>(
-            tooltip: tr(context, 'الإعدادات السريعة', 'Quick settings'),
-            icon: const Icon(Icons.tune_rounded),
-            onSelected: (value) async {
-              final notifier = ref.read(appSettingsProvider.notifier);
-              if (value == 'ar' || value == 'en') {
-                await notifier.setLanguage(value);
-              } else if (value == 'profile') {
-                final profile = await ref.read(businessProfileProvider.future);
-                if (!context.mounted) return;
-                await showDialog<bool>(
-                  context: context,
-                  builder: (_) => BusinessProfileDialog(profile: profile),
-                );
-                if (!context.mounted) return;
-                ref.invalidate(businessProfileProvider);
-              } else if (value == 'directory') {
-                await Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => const BusinessDirectoryScreen(),
-                ));
-              }
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem(value: 'ar', child: Text('العربية')),
-              PopupMenuItem(value: 'en', child: Text('English')),
-              const PopupMenuDivider(),
-              PopupMenuItem(
-                  value: 'profile',
-                  child: Text(tr(context, 'بيانات المحل', 'Business profile'))),
-              PopupMenuItem(
-                  value: 'directory',
-                  child: Text(tr(context, 'الفروع والموظفون والأصناف',
-                      'Branches, staff and products'))),
-            ],
-          ),
-          const SizedBox(width: 6),
-        ],
       ),
-      body: IndexedStack(
+      body: SafeArea(top: false, child: IndexedStack(
         key: const ValueKey('purchase-ledger-tabs'),
         index: _index,
-        children: _pages,
-      ),
+        children: pages,
+      )),
       bottomNavigationBar: NavigationBar(
         labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
         selectedIndex: _index,
-        onDestinationSelected: (value) => setState(() => _index = value),
+        onDestinationSelected: (value) => _navigateFromDashboard(value),
         destinations: [
           NavigationDestination(
             icon: const Icon(Icons.dashboard_outlined),

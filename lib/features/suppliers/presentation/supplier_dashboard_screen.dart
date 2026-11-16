@@ -102,12 +102,15 @@ class _SupplierDashboardContent extends ConsumerWidget {
             ],
           ),
         ),
-        body: TabBarView(
-          children: [
-            _overview(context, ref),
-            _invoices(context, ref),
-            _payments(context, ref),
-          ],
+        body: SafeArea(
+          top: false,
+          child: TabBarView(
+            children: [
+              _overview(context, ref),
+              _invoices(context, ref),
+              _payments(context, ref),
+            ],
+          ),
         ),
       ),
     );
@@ -118,8 +121,7 @@ class _SupplierDashboardContent extends ConsumerWidget {
     return RefreshIndicator(
       onRefresh: () async => _refresh(ref),
       child: ListView(
-        padding: EdgeInsets.fromLTRB(
-            14, 12, 14, 32 + MediaQuery.paddingOf(context).bottom),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 32),
         children: [
           Card(
             child: Padding(
@@ -242,26 +244,21 @@ class _SupplierDashboardContent extends ConsumerWidget {
                 ?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 7),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth < 410 ? 2 : 3;
-              final width = (constraints.maxWidth - (columns - 1) * 7) / columns;
-              return Wrap(
-                spacing: 7,
-                runSpacing: 7,
-                children: [
-                  SizedBox(width: width, child: _countCard(context,
-                      tr(context, 'غير مسددة', 'Unpaid'),
-                      data.unpaidInvoiceCount, AppTheme.danger)),
-                  SizedBox(width: width, child: _countCard(context,
-                      tr(context, 'مسددة جزئياً', 'Partial'),
-                      data.partiallyPaidInvoiceCount, AppTheme.amber)),
-                  SizedBox(width: width, child: _countCard(context,
-                      tr(context, 'مسددة', 'Paid'),
-                      data.paidInvoiceCount, AppTheme.emerald)),
-                ],
-              );
-            },
+          IntrinsicHeight(
+            child: Row(children: [
+              Expanded(child: _countCard(context,
+                  tr(context, 'غير مسددة', 'Unpaid'),
+                  data.unpaidInvoiceCount, AppTheme.danger,
+                  onTap: () => _openInvoicesByStatus(context, 'unpaid'))),
+              Expanded(child: _countCard(context,
+                  tr(context, 'مسددة جزئياً', 'Partial'),
+                  data.partiallyPaidInvoiceCount, AppTheme.amber,
+                  onTap: () => _openInvoicesByStatus(context, 'partial'))),
+              Expanded(child: _countCard(context,
+                  tr(context, 'مسددة', 'Paid'),
+                  data.paidInvoiceCount, AppTheme.emerald,
+                  onTap: () => _openInvoicesByStatus(context, 'paid'))),
+            ]),
           ),
           const SizedBox(height: 12),
           Text(
@@ -272,7 +269,15 @@ class _SupplierDashboardContent extends ConsumerWidget {
                 ?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 7),
-          _activityChart(context, data.monthlyActivity),
+          if (data.monthlyActivity.isEmpty)
+            _activityChart(context, const <SupplierMonthlyActivity>[],
+                data.defaultCurrency)
+          else
+            for (final currency in data.monthlyActivity
+                .map((entry) => entry.currency).toSet())
+              _activityChart(context, data.monthlyActivity
+                  .where((entry) => entry.currency == currency)
+                  .toList(growable: false), currency),
           const SizedBox(height: 10),
           Card(
             child: Padding(
@@ -387,7 +392,7 @@ class _SupplierDashboardContent extends ConsumerWidget {
         }
         return RefreshIndicator(
           onRefresh: () async {
-            ref.invalidate(supplierInvoicesProvider(data.supplierId));
+            _refresh(ref);
             await ref.read(supplierInvoicesProvider(data.supplierId).future);
           },
           child: ListView.builder(
@@ -494,7 +499,7 @@ class _SupplierDashboardContent extends ConsumerWidget {
         }
         return RefreshIndicator(
           onRefresh: () async {
-            ref.invalidate(supplierPaymentsProvider(data.supplierId));
+            _refresh(ref);
             await ref.read(supplierPaymentsProvider(data.supplierId).future);
           },
           child: ListView.builder(
@@ -503,7 +508,17 @@ class _SupplierDashboardContent extends ConsumerWidget {
             itemBuilder: (context, index) {
               final payment = items[index];
               return Card(
-                child: Padding(
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SupplierDocumentDetailScreen(
+                        documentType: 'payment', documentId: payment.id),
+                    ),
+                  ).then((_) {
+                    if (context.mounted) _refresh(ref);
+                  }),
+                  child: Padding(
                   padding: const EdgeInsets.all(13),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -566,6 +581,7 @@ class _SupplierDashboardContent extends ConsumerWidget {
                             style: Theme.of(context).textTheme.bodySmall),
                     ],
                   ),
+                  ),
                 ),
               );
             },
@@ -597,11 +613,11 @@ class _SupplierDashboardContent extends ConsumerWidget {
               runSpacing: 8,
               children: [
                 _smallMetric(context, tr(context, 'المشتريات', 'Purchases'),
-                    summary.totalPurchasesMinor, summary.currency, locale),
+                    summary.totalPurchasesMinor, '', locale),
                 _smallMetric(context, tr(context, 'المدفوعات', 'Payments'),
-                    summary.totalPaymentsMinor, summary.currency, locale),
+                    summary.totalPaymentsMinor, '', locale),
                 _smallMetric(context, tr(context, 'المرتجعات', 'Returns'),
-                    summary.totalReturnsMinor, summary.currency, locale),
+                    summary.totalReturnsMinor, '', locale),
               ],
             ),
             const Divider(height: 18),
@@ -616,8 +632,8 @@ class _SupplierDashboardContent extends ConsumerWidget {
                   TextStyle(color: balanceColor, fontWeight: FontWeight.w700),
             ),
             Text(
-              Money.format(summary.netBalanceMinor.abs(), summary.currency,
-                  locale: locale),
+              Money.format(summary.netBalanceMinor.abs(), '',
+                  locale: locale).trim(),
               style: TextStyle(
                   color: balanceColor,
                   fontSize: 21,
@@ -635,16 +651,28 @@ class _SupplierDashboardContent extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: Theme.of(context).textTheme.labelSmall),
-        Text(Money.format(value, currency, locale: locale),
+        Text(Money.format(value, currency, locale: locale).trim(),
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
       ],
     );
   }
 
-  Widget _countCard(
-      BuildContext context, String label, int count, Color color) {
+  void _openInvoicesByStatus(BuildContext context, String status) {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => _SupplierInvoicesByStatusScreen(
+        supplierId: data.supplierId,
+        status: status,
+      ),
+    ));
+  }
+
+  Widget _countCard(BuildContext context, String label, int count, Color color,
+      {required VoidCallback onTap}) {
     return Card(
-      child: Padding(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
         child: Column(
           children: [
@@ -653,15 +681,18 @@ class _SupplierDashboardContent extends ConsumerWidget {
                     color: color, fontSize: 21, fontWeight: FontWeight.w900)),
             Text(label,
                 textAlign: TextAlign.center,
+                maxLines: 2,
                 style: Theme.of(context).textTheme.labelSmall),
           ],
         ),
+      ),
       ),
     );
   }
 
   Widget _activityChart(
-      BuildContext context, List<SupplierMonthlyActivity> activity) {
+      BuildContext context, List<SupplierMonthlyActivity> activity,
+      String currency) {
     if (activity.isEmpty) {
       return _emptyCard(
           context,
@@ -674,7 +705,8 @@ class _SupplierDashboardContent extends ConsumerWidget {
         0,
         (max, item) => math.max(
               max,
-              math.max(item.purchasesMinor, item.paymentsMinor),
+              math.max(item.returnsMinor,
+                  math.max(item.purchasesMinor, item.paymentsMinor)),
             ));
     return Card(
       child: Padding(
@@ -682,6 +714,9 @@ class _SupplierDashboardContent extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text(currency,
+                style: const TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 12,
               runSpacing: 6,
@@ -741,6 +776,7 @@ class _SupplierDashboardContent extends ConsumerWidget {
   }
 
   Widget _bar(double height, Color color) {
+    if (height <= 0) return const SizedBox(width: 7);
     return Container(
       width: 7,
       height: height.clamp(2, 105).toDouble(),
@@ -854,11 +890,17 @@ class _SupplierDashboardContent extends ConsumerWidget {
   }
 
   Widget _dateLine(BuildContext context, String label, String? value) {
+    final parsed = value == null ? null : DateTime.tryParse(value);
+    final readable = parsed == null
+        ? (value ?? '—')
+        : MaterialLocalizations.of(context).formatFullDate(parsed);
     return Row(
       children: [
         Expanded(
             child: Text(label, style: Theme.of(context).textTheme.bodySmall)),
-        Text(value ?? '—', style: const TextStyle(fontWeight: FontWeight.w700)),
+        Flexible(child: Text(readable,
+            textAlign: TextAlign.end,
+            style: const TextStyle(fontWeight: FontWeight.w700))),
       ],
     );
   }
@@ -894,33 +936,11 @@ class _SupplierDashboardContent extends ConsumerWidget {
     WidgetRef ref,
     SupplierPaymentRecord payment,
   ) async {
-    final reasonController = TextEditingController();
     final reason = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr(context, 'عكس دفعة المورد', 'Reverse supplier payment')),
-        content: TextField(
-          controller: reasonController,
-          maxLines: 2,
-          decoration: InputDecoration(
-            labelText: tr(context, 'سبب العكس *', 'Reversal reason *'),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(tr(context, 'إلغاء', 'Cancel')),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, reasonController.text.trim()),
-            child: Text(tr(context, 'تأكيد العكس', 'Confirm reversal')),
-          ),
-        ],
-      ),
+      builder: (_) => const _SupplierPaymentReversalDialog(),
     );
-    reasonController.dispose();
-    if (reason == null || reason.isEmpty) return;
+    if (reason == null || reason.isEmpty || !context.mounted) return;
     try {
       await ref.read(supplierAccountingRepositoryProvider).reversePayment(
             paymentId: payment.id,
@@ -954,5 +974,153 @@ class _SupplierDashboardContent extends ConsumerWidget {
         currency: currency,
       ),
     ));
+  }
+}
+
+/// Owns its input controller until Flutter unmounts the dialog's route.
+/// Disposing a controller immediately after showDialog returns can happen
+/// before the reverse pop animation has finished building its TextField.
+class _SupplierPaymentReversalDialog extends StatefulWidget {
+  const _SupplierPaymentReversalDialog();
+
+  @override
+  State<_SupplierPaymentReversalDialog> createState() =>
+      _SupplierPaymentReversalDialogState();
+}
+
+class _SupplierPaymentReversalDialogState
+    extends State<_SupplierPaymentReversalDialog> {
+  final _reason = TextEditingController();
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        scrollable: true,
+        title: Text(tr(context, 'عكس دفعة المورد', 'Reverse supplier payment')),
+        content: TextField(
+          controller: _reason,
+          maxLines: 2,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+              labelText: tr(context, 'سبب العكس *', 'Reversal reason *')),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr(context, 'إلغاء', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: _reason.text.trim().isEmpty
+                ? null
+                : () => Navigator.pop(context, _reason.text.trim()),
+            child: Text(tr(context, 'تأكيد العكس', 'Confirm reversal')),
+          ),
+        ],
+      );
+}
+
+/// The same invoice status model powers both the overview counters and the
+/// destination list; an unallocated advance never changes an invoice status.
+class _SupplierInvoicesByStatusScreen extends ConsumerWidget {
+  const _SupplierInvoicesByStatusScreen({
+    required this.supplierId,
+    required this.status,
+  });
+
+  final int supplierId;
+  final String status;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final invoices = ref.watch(supplierInvoicesProvider(supplierId));
+    final title = switch (status) {
+      'unpaid' => tr(context, 'فواتير غير مسددة', 'Unpaid invoices'),
+      'partial' => tr(context, 'فواتير مسددة جزئياً', 'Partially paid invoices'),
+      'paid' => tr(context, 'فواتير مسددة', 'Paid invoices'),
+      _ => tr(context, 'فواتير المورد', 'Supplier invoices'),
+    };
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: SafeArea(
+        top: false,
+        child: invoices.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, stack) => Center(
+            child: Text(tr(context, 'تعذر عرض الفواتير', 'Could not load invoices')),
+          ),
+          data: (all) {
+            final visible = all.where((invoice) => invoice.status == status)
+                .toList(growable: false);
+            if (visible.isEmpty) {
+              return Center(child: Text(tr(context,
+                  'لا توجد فواتير في هذه الحالة.',
+                  'There are no invoices with this status.')));
+            }
+            return RefreshIndicator(
+              onRefresh: () async {
+                ref.invalidate(supplierInvoicesProvider(supplierId));
+                await ref.read(supplierInvoicesProvider(supplierId).future);
+              },
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                itemCount: visible.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 7),
+                itemBuilder: (context, index) {
+                  final invoice = visible[index];
+                  final locale = Localizations.localeOf(context).languageCode;
+                  return Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () async {
+                        await Navigator.of(context).push(MaterialPageRoute<void>(
+                          builder: (_) => SupplierDocumentDetailScreen(
+                            documentType: 'credit_invoice', documentId: invoice.id),
+                        ));
+                        if (context.mounted) {
+                          ref.invalidate(supplierInvoicesProvider(supplierId));
+                          ref.invalidate(supplierDashboardProvider(supplierId));
+                        }
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(children: [
+                              Expanded(child: Text('#${invoice.invoiceNumber}',
+                                style: const TextStyle(fontWeight: FontWeight.w700))),
+                              const Icon(Icons.chevron_left),
+                            ]),
+                            Text(invoice.invoiceDate,
+                                style: Theme.of(context).textTheme.bodySmall),
+                            const SizedBox(height: 6),
+                            for (final detail in <(String, int)>[
+                              (tr(context, 'الإجمالي', 'Total'), invoice.totalMinor),
+                              (tr(context, 'المخصص', 'Allocated'), invoice.allocatedMinor),
+                              (tr(context, 'المرتجع', 'Returned'), invoice.returnedMinor),
+                              (tr(context, 'المتبقي', 'Remaining'), invoice.outstandingMinor),
+                            ])
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Text('${detail.$1}: '
+                                  '${Money.format(detail.$2, invoice.currency, locale: locale)}'),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }

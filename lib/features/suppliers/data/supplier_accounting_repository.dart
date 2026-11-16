@@ -26,9 +26,6 @@ class SupplierAccountingRepository {
 
     final movementRows = await db.rawQuery('''
       SELECT currency,
-        SUM(CASE WHEN movement_type IN ('credit_invoice','daily_purchase')
-                  AND signed_amount_minor > 0
-                 THEN signed_amount_minor ELSE 0 END) AS purchases_minor,
         SUM(CASE WHEN signed_amount_minor < 0
                   AND movement_type IN ('payment','adjustment')
                  THEN -signed_amount_minor ELSE 0 END) AS credits_minor,
@@ -40,6 +37,23 @@ class SupplierAccountingRepository {
       GROUP BY currency
       ORDER BY currency
     ''', [supplierId]);
+
+    // Purchase totals represent still-posted documents, not historical debit
+    // movements that were subsequently voided with immutable reversal entries.
+    final postedPurchaseRows = await db.rawQuery('''
+      SELECT currency, SUM(total_minor) AS purchases_minor FROM (
+        SELECT currency, total_minor FROM credit_purchase_invoices
+          WHERE supplier_id = ? AND status = 'posted'
+        UNION ALL
+        SELECT currency, total_minor FROM daily_purchase_operations
+          WHERE supplier_id = ? AND accounting_mode = 'supplier_account'
+            AND status = 'posted'
+      ) GROUP BY currency
+    ''', [supplierId, supplierId]);
+    final postedPurchasesByCurrency = {
+      for (final row in postedPurchaseRows)
+        row['currency'] as String: (row['purchases_minor'] as int?) ?? 0,
+    };
 
     final paymentRows = await db.rawQuery('''
       SELECT p.currency,
@@ -60,7 +74,7 @@ class SupplierAccountingRepository {
       final net = (row['net_minor'] as int?) ?? 0;
       return SupplierCurrencySummary(
         currency: currency,
-        totalPurchasesMinor: (row['purchases_minor'] as int?) ?? 0,
+        totalPurchasesMinor: postedPurchasesByCurrency[currency] ?? 0,
         totalPaymentsMinor: netPayments[currency] ?? 0,
         totalReturnsMinor: (row['returns_minor'] as int?) ?? 0,
         netBalanceMinor: net,
@@ -147,38 +161,38 @@ class SupplierAccountingRepository {
     ''', [supplierId]);
 
     final monthlyRows = await db.rawQuery('''
-      SELECT month,
+      SELECT month, currency,
         SUM(purchases_minor) AS purchases_minor,
         SUM(payments_minor) AS payments_minor,
         SUM(returns_minor) AS returns_minor
       FROM (
-        SELECT substr(invoice_date,1,7) AS month,
+        SELECT substr(invoice_date,1,7) AS month, currency,
                SUM(total_minor) AS purchases_minor, 0 AS payments_minor, 0 AS returns_minor
         FROM credit_purchase_invoices
         WHERE supplier_id = ? AND status = 'posted'
-        GROUP BY substr(invoice_date,1,7)
+        GROUP BY substr(invoice_date,1,7), currency
         UNION ALL
-        SELECT substr(s.purchase_date,1,7) AS month,
+        SELECT substr(s.purchase_date,1,7) AS month, o.currency,
                SUM(o.total_minor) AS purchases_minor, 0 AS payments_minor, 0 AS returns_minor
         FROM daily_purchase_operations o
         JOIN daily_purchase_sheets s ON s.id = o.sheet_id
         WHERE o.supplier_id = ? AND o.accounting_mode = 'supplier_account' AND o.status = 'posted'
-        GROUP BY substr(s.purchase_date,1,7)
+        GROUP BY substr(s.purchase_date,1,7), o.currency
         UNION ALL
-        SELECT substr(payment_date,1,7), 0,
+        SELECT substr(payment_date,1,7), p.currency, 0,
                SUM(p.amount_minor - COALESCE(r.amount_minor,0)), 0
         FROM supplier_payments p
         LEFT JOIN supplier_payment_reversals r ON r.payment_id = p.id
         WHERE p.supplier_id = ?
-        GROUP BY substr(payment_date,1,7)
+        GROUP BY substr(payment_date,1,7), p.currency
         UNION ALL
-        SELECT substr(return_date,1,7), 0, 0, SUM(total_minor)
+        SELECT substr(return_date,1,7), currency, 0, 0, SUM(total_minor)
         FROM purchase_returns
         WHERE supplier_id = ?
-        GROUP BY substr(return_date,1,7)
+        GROUP BY substr(return_date,1,7), currency
       )
-      GROUP BY month
-      ORDER BY month
+      GROUP BY month, currency
+      ORDER BY month, currency
     ''', [supplierId, supplierId, supplierId, supplierId]);
 
     return SupplierDashboard(
@@ -202,6 +216,7 @@ class SupplierAccountingRepository {
       monthlyActivity: monthlyRows
           .map((row) => SupplierMonthlyActivity(
                 month: row['month'] as String,
+                currency: row['currency'] as String,
                 purchasesMinor: (row['purchases_minor'] as int?) ?? 0,
                 paymentsMinor: (row['payments_minor'] as int?) ?? 0,
                 returnsMinor: (row['returns_minor'] as int?) ?? 0,

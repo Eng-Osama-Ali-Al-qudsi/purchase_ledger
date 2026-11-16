@@ -18,6 +18,7 @@ class DailyPurchasesRepository {
     String? dateTo,
     int? branchId,
     int? employeeId,
+    bool includeArchived = false,
   }) async {
     final db = await _database.database;
     final where = <String>[];
@@ -38,8 +39,17 @@ class DailyPurchasesRepository {
       where.add('s.employee_id = ?');
       args.add(employeeId);
     }
+    if (!includeArchived) {
+      where.add('''NOT EXISTS (
+        SELECT 1 FROM daily_purchase_sheet_events archived
+        WHERE archived.sheet_id = s.id AND archived.event_type = 'archived'
+      )''');
+    }
     final rows = await db.rawQuery('''
-      SELECT s.id, s.sheet_number, s.purchase_date, s.status,
+      SELECT s.id, s.sheet_number, s.purchase_date,
+        CASE WHEN EXISTS (SELECT 1 FROM daily_purchase_sheet_events archived
+          WHERE archived.sheet_id = s.id AND archived.event_type = 'archived')
+          THEN 'ARCHIVED' ELSE s.status END AS status,
         b.name AS branch_name, e.name AS employee_name,
         COUNT(DISTINCT CASE WHEN o.status = 'posted' THEN o.id END) AS operation_count,
         COUNT(DISTINCT CASE WHEN o.status = 'posted' THEN i.id END) AS item_count
@@ -134,13 +144,40 @@ class DailyPurchasesRepository {
     final db = await _database.database;
     final now = DateTime.now().toIso8601String();
     return db.transaction((txn) async {
-      final count = Sqflite.firstIntValue(await txn.rawQuery(
-            'SELECT COUNT(*) FROM daily_purchase_sheets WHERE purchase_date = ?',
-            [purchaseDate],
-          )) ??
-          0;
+      if (branchId != null) {
+        final branches = await txn.query('branches',
+            columns: ['id'], where: 'id = ? AND is_active = 1',
+            whereArgs: [branchId], limit: 1);
+        if (branches.isEmpty) throw StateError('Selected branch is not active');
+      }
+      if (employeeId != null) {
+        final employees = await txn.query('employees',
+            columns: ['branch_id'], where: 'id = ? AND is_active = 1',
+            whereArgs: [employeeId], limit: 1);
+        if (employees.isEmpty ||
+            (branchId != null && employees.first['branch_id'] != branchId)) {
+          throw StateError('Purchasing officer must belong to the selected branch');
+        }
+      }
+      // A draft's date can change without rewriting its permanent document
+      // number. COUNT(*)+1 may then reuse a number already issued for a day.
+      // Choose a monotonically increasing suffix from existing *identifiers*.
+      final prefix = 'DPS-${purchaseDate.replaceAll('-', '')}-';
+      final existing = await txn.rawQuery(
+        '''SELECT sheet_number FROM daily_purchase_sheets WHERE sheet_number LIKE ?
+           UNION ALL
+           SELECT sheet_number FROM daily_sheet_deleted_drafts WHERE sheet_number LIKE ?''',
+        ['$prefix%', '$prefix%'],
+      );
+      var lastSequence = 0;
+      for (final row in existing) {
+        final value = row['sheet_number'] as String;
+        if (!value.startsWith(prefix)) continue;
+        final suffix = int.tryParse(value.substring(prefix.length));
+        if (suffix != null && suffix > lastSequence) lastSequence = suffix;
+      }
       final sheetNumber =
-          'DPS-${purchaseDate.replaceAll('-', '')}-${(count + 1).toString().padLeft(3, '0')}';
+          '$prefix${(lastSequence + 1).toString().padLeft(3, '0')}';
       final id = await txn.insert('daily_purchase_sheets', {
         'sheet_number': sheetNumber,
         'purchase_date': purchaseDate,
@@ -171,6 +208,197 @@ class DailyPurchasesRepository {
       return id;
     });
   }
+
+  /// Edits metadata only; never rewrites posted financial history.
+  /// If operations ever existed on this draft, only the notes may change.
+  Future<void> updateDraftSheet({
+    required int sheetId,
+    required String purchaseDate,
+    int? branchId,
+    int? employeeId,
+    String? notes,
+  }) async {
+    _validateDate(purchaseDate);
+    final db = await _database.database;
+    final now = DateTime.now().toIso8601String();
+    await db.transaction((txn) async {
+      final rows = await txn.query('daily_purchase_sheets',
+          where: 'id = ?', whereArgs: [sheetId], limit: 1);
+      if (rows.isEmpty) throw StateError('Daily sheet not found');
+      final before = rows.first;
+      if (before['status'] != 'DRAFT' || await _isArchived(txn, sheetId)) {
+        throw StateError('Only active draft sheets can be edited');
+      }
+      final count = Sqflite.firstIntValue(await txn.rawQuery(
+          'SELECT COUNT(*) FROM daily_purchase_operations WHERE sheet_id = ?',
+          [sheetId])) ?? 0;
+      if (count > 0 &&
+          (purchaseDate != before['purchase_date'] ||
+           branchId != before['branch_id'] ||
+           employeeId != before['employee_id'])) {
+        final financialRows = Sqflite.firstIntValue(await txn.rawQuery('''
+          SELECT COUNT(*) FROM daily_purchase_operations o
+          WHERE o.sheet_id = ? AND (
+            o.status <> 'posted' OR o.recording_category IS NOT 'cash'
+            OR o.accounting_mode <> 'daily_outstanding'
+            OR o.supplier_id IS NOT NULL
+            OR o.legacy_cash_purchase_id IS NOT NULL
+            OR o.initial_supplier_payment_id IS NOT NULL
+            OR o.total_minor <> o.amount_paid_minor
+            OR EXISTS (SELECT 1 FROM daily_purchase_outstandings ob
+              WHERE ob.operation_id = o.id)
+          )
+        ''', [sheetId])) ?? 0;
+        if (financialRows != 0) {
+          throw StateError('Only notes can change when supplier, outstanding, or void operation history exists');
+        }
+      }
+      if (branchId != null) {
+        final branches = await txn.query('branches', where: 'id = ?',
+            whereArgs: [branchId], limit: 1);
+        if (branches.isEmpty) throw StateError('Branch not found');
+      }
+      if (employeeId != null) {
+        final employees = await txn.query('employees', where: 'id = ?',
+            whereArgs: [employeeId], limit: 1);
+        if (employees.isEmpty ||
+            (branchId != null && employees.first['branch_id'] != branchId)) {
+          throw StateError('Employee must belong to the selected branch');
+        }
+      }
+      final after = <String, Object?>{
+        'purchase_date': purchaseDate,
+        'branch_id': branchId,
+        'employee_id': employeeId,
+        'notes': _clean(notes),
+      };
+      if (after.entries.every((field) => before[field.key] == field.value)) {
+        return;
+      }
+      await txn.update('daily_purchase_sheets', {...after, 'updated_at': now},
+          where: 'id = ?', whereArgs: [sheetId]);
+      final changes = <String, Object?>{
+        'before': {
+          for (final key in after.keys) key: before[key],
+        },
+        'after': after,
+      };
+      await txn.insert('daily_purchase_sheet_events', {
+        'sheet_id': sheetId,
+        'event_type': 'metadata_edited',
+        'details_json': jsonEncode(changes),
+        'created_at': now,
+      });
+      await _audit(txn, 'update', 'daily_purchase_sheet', sheetId,
+          changes, now);
+    });
+  }
+
+  /// Permanently remove ONLY a draft with no purchase operation history or
+  /// downstream financial links. All original events and its document number
+  /// survive in an append-only deletion receipt (SQLite schema V8).
+  Future<void> deleteEmptyDraftSheet(int sheetId, {required String reason}) async {
+    final cleanReason = reason.trim();
+    if (cleanReason.isEmpty) {
+      throw ArgumentError('A deletion reason is required');
+    }
+    final db = await _database.database;
+    final now = DateTime.now().toIso8601String();
+    await db.transaction((txn) async {
+      final rows = await txn.query('daily_purchase_sheets',
+          where: 'id = ?', whereArgs: [sheetId], limit: 1);
+      if (rows.isEmpty) throw StateError('Daily sheet not found');
+      final sheet = rows.first;
+      if (sheet['status'] != 'DRAFT' || await _isArchived(txn, sheetId)) {
+        throw StateError('Only active draft sheets can be deleted');
+      }
+      if (sheet['header_snapshot_json'] != null ||
+          sheet['totals_snapshot_json'] != null ||
+          sheet['operations_snapshot_json'] != null ||
+          sheet['handed_over_at'] != null || sheet['closed_at'] != null) {
+        throw StateError('A handed-over sheet cannot be deleted');
+      }
+      final operationCount = Sqflite.firstIntValue(await txn.rawQuery(
+        'SELECT COUNT(*) FROM daily_purchase_operations WHERE sheet_id = ?',
+        [sheetId],
+      )) ?? 0;
+      final amendmentCount = Sqflite.firstIntValue(await txn.rawQuery(
+        'SELECT COUNT(*) FROM daily_purchase_sheet_amendments WHERE sheet_id = ?',
+        [sheetId],
+      )) ?? 0;
+      // A void operation still has permanent history; do not mistake the
+      // summary's active-operation count for proof that deletion is safe.
+      if (operationCount != 0 || amendmentCount != 0) {
+        throw StateError('Purchase history exists. Void/archive instead; permanent deletion is blocked');
+      }
+      final events = await txn.query('daily_purchase_sheet_events',
+          where: 'sheet_id = ?', whereArgs: [sheetId], orderBy: 'id');
+      final deletionReceipt = <String, Object?>{
+        'sheet_id': sheetId,
+        'sheet_number': sheet['sheet_number'],
+        'purchase_date': sheet['purchase_date'],
+        'branch_id': sheet['branch_id'],
+        'employee_id': sheet['employee_id'],
+        'deleted_at': now,
+        'deletion_reason': cleanReason,
+        'events_json': jsonEncode(events),
+        'original_created_at': sheet['created_at'],
+      };
+      // The insert is checked by the V8 database trigger, and remains in the
+      // same transaction as event deletion, sheet deletion, and audit logging.
+      await txn.insert('daily_sheet_deleted_drafts', deletionReceipt);
+      await txn.delete('daily_purchase_sheet_events',
+          where: 'sheet_id = ?', whereArgs: [sheetId]);
+      final removed = await txn.delete('daily_purchase_sheets',
+          where: 'id = ?', whereArgs: [sheetId]);
+      if (removed != 1) throw StateError('Sheet deletion did not complete');
+      await _audit(txn, 'delete_empty_draft', 'daily_purchase_sheet',
+          sheetId, {
+            'sheet_number': sheet['sheet_number'],
+            'purchase_date': sheet['purchase_date'],
+            'reason': cleanReason,
+            'events_retained': events.length,
+          }, now);
+    });
+  }
+
+  /// Soft archive: preserve the original record and an immutable audit trail.
+  Future<void> archiveEmptyDraftSheet(int sheetId, {required String reason}) async {
+    final cleanReason = reason.trim();
+    if (cleanReason.isEmpty) throw ArgumentError('Archiving reason is required');
+    final db = await _database.database;
+    final now = DateTime.now().toIso8601String();
+    await db.transaction((txn) async {
+      final rows = await txn.query('daily_purchase_sheets',
+          where: 'id = ?', whereArgs: [sheetId], limit: 1);
+      if (rows.isEmpty) throw StateError('Daily sheet not found');
+      if (rows.first['status'] != 'DRAFT' ||
+          await _isArchived(txn, sheetId)) {
+        throw StateError('Only active draft sheets can be archived');
+      }
+      final count = Sqflite.firstIntValue(await txn.rawQuery(
+        'SELECT COUNT(*) FROM daily_purchase_operations WHERE sheet_id = ?',
+        [sheetId],
+      )) ?? 0;
+      if (count != 0) {
+        throw StateError('A sheet with purchase history cannot be archived');
+      }
+      final details = {'reason': cleanReason, 'sheet_number': rows.first['sheet_number']};
+      await txn.insert('daily_purchase_sheet_events', {
+        'sheet_id': sheetId,
+        'event_type': 'archived',
+        'details_json': jsonEncode(details),
+        'created_at': now,
+      });
+      await _audit(txn, 'archive', 'daily_purchase_sheet', sheetId, details, now);
+    });
+  }
+
+  Future<bool> _isArchived(Transaction txn, int sheetId) async =>
+      (Sqflite.firstIntValue(await txn.rawQuery(
+        "SELECT COUNT(*) FROM daily_purchase_sheet_events WHERE sheet_id = ? AND event_type = 'archived'",
+        [sheetId],
+      )) ?? 0) > 0;
 
   /// Stable person directory. Balances are not duplicated here: the canonical
   /// obligation, settlement and adjustment rows are the daily outstanding
@@ -330,6 +558,9 @@ class DailyPurchasesRepository {
       if (sheetRows.isEmpty) throw StateError('Daily sheet not found');
       if (sheetRows.first['status'] != 'DRAFT') {
         throw StateError('Only draft daily sheets can be edited');
+      }
+      if (await _isArchived(txn, sheetId)) {
+        throw StateError('Archived daily sheets cannot receive purchases');
       }
 
       String? resolvedSeller = _clean(sellerName);
@@ -533,11 +764,17 @@ class DailyPurchasesRepository {
       }
       final oldTotal = operation['total_minor'] as int;
       final initialPaid = operation['amount_paid_minor'] as int;
-      if (initialPaid > totals.total) {
+      final mode = operation['accounting_mode'] as String;
+      // A fully paid cash purchase has no receivable. When correcting the
+      // draft's line items, its paid-at-purchase figure must follow the new
+      // total atomically; otherwise a price increase silently creates debt.
+      final isCashPurchase = mode == 'daily_outstanding' &&
+          (operation['recording_category'] == 'cash' ||
+            (operation['recording_category'] == null && initialPaid == oldTotal));
+      if (!isCashPurchase && initialPaid > totals.total) {
         throw StateError(
             'New total cannot be lower than the amount already paid');
       }
-      final mode = operation['accounting_mode'] as String;
       if (mode == 'daily_outstanding') {
         final outstandingRows = await txn.query(
           'daily_purchase_outstandings',
@@ -546,7 +783,12 @@ class DailyPurchasesRepository {
           whereArgs: [operationId],
           limit: 1,
         );
-        if (outstandingRows.isNotEmpty) {
+        if (isCashPurchase && outstandingRows.isNotEmpty) {
+          throw StateError('A fully paid cash purchase has an unexpected outstanding; correction blocked');
+        }
+        if (isCashPurchase) {
+          // No separate liability or second payment may be created here.
+        } else if (outstandingRows.isNotEmpty) {
           final outstandingId = outstandingRows.first['id'] as int;
           final laterPaid = Sqflite.firstIntValue(await txn.rawQuery(
                 'SELECT COALESCE(SUM(amount_minor),0) FROM daily_purchase_outstanding_payments WHERE outstanding_id = ?',
@@ -613,6 +855,23 @@ class DailyPurchasesRepository {
         }
       }
 
+      // Preserve the exact before/after item data in append-only audit logs.
+      // A draft correction may replace live line rows, but must never silently
+      // destroy the explanation of the previous financial amount.
+      final previousItems = await txn.query('daily_purchase_items',
+          where: 'operation_id = ?', whereArgs: [operationId], orderBy: 'id');
+      final newItemsAudit = lines.map((line) => {
+        'description': line.description.trim(),
+        'category_id': line.categoryId,
+        'unit_name': line.unitName.trim(),
+        'quantity_milli': line.quantityMilli,
+        'unit_price_minor': line.unitPriceMinor,
+        'discount_minor': line.discountMinor,
+        'tax_minor': line.taxMinor,
+        'line_total_minor': line.totalMinor,
+        'seller_name': line.sellerName,
+        'notes': line.notes,
+      }).toList(growable: false);
       await txn.delete('daily_purchase_items',
           where: 'operation_id = ?', whereArgs: [operationId]);
       for (final line in lines) {
@@ -625,6 +884,7 @@ class DailyPurchasesRepository {
             'discount_minor': totals.discount,
             'tax_minor': totals.tax,
             'total_minor': totals.total,
+            'amount_paid_minor': isCashPurchase ? totals.total : initialPaid,
             'payment_method': paymentMethod,
             'notes': _clean(notes),
             'updated_at': now,
@@ -648,6 +908,8 @@ class DailyPurchasesRepository {
           'operation_id': operationId,
           'old_total_minor': oldTotal,
           'new_total_minor': totals.total,
+          'old_paid_minor': initialPaid,
+          'new_paid_minor': isCashPurchase ? totals.total : initialPaid,
           'old_payment_method': operation['payment_method'],
           'new_payment_method': paymentMethod,
         }),
@@ -661,8 +923,12 @@ class DailyPurchasesRepository {
           {
             'old_total_minor': oldTotal,
             'new_total_minor': totals.total,
+            'old_paid_minor': initialPaid,
+            'new_paid_minor': isCashPurchase ? totals.total : initialPaid,
             'old_payment_method': operation['payment_method'],
             'new_payment_method': paymentMethod,
+            'previous_items': previousItems,
+            'updated_items': newItemsAudit,
           },
           now);
     });
@@ -1177,6 +1443,9 @@ class DailyPurchasesRepository {
       );
       if (rows.isEmpty) throw StateError('Daily sheet not found');
       final sheet = rows.first;
+      if (await _isArchived(txn, sheetId)) {
+        throw StateError('An archived daily sheet cannot be handed over');
+      }
       final current = sheet['status'] as String;
       if (transitions[current] != targetStatus) {
         throw StateError(
@@ -1371,6 +1640,14 @@ class DailyPurchasesRepository {
 
   Future<DailySheetDetail> getSheetDetail(int sheetId) async {
     final db = await _database.database;
+    final hasOperationHistory = (Sqflite.firstIntValue(await db.rawQuery(
+      'SELECT COUNT(*) FROM daily_purchase_operations WHERE sheet_id = ?',
+      [sheetId],
+    )) ?? 0) > 0;
+    final archived = (Sqflite.firstIntValue(await db.rawQuery(
+      "SELECT COUNT(*) FROM daily_purchase_sheet_events WHERE sheet_id = ? AND event_type = 'archived'",
+      [sheetId],
+    )) ?? 0) > 0;
     final rows = await db.rawQuery('''
       SELECT s.*, b.name AS branch_name, e.name AS employee_name
       FROM daily_purchase_sheets s
@@ -1473,6 +1750,19 @@ class DailyPurchasesRepository {
         )) ??
         0;
 
+    final restrictedOperationCount = Sqflite.firstIntValue(await db.rawQuery('''
+      SELECT COUNT(*) FROM daily_purchase_operations o
+      WHERE o.sheet_id = ? AND (
+        o.status <> 'posted' OR o.recording_category IS NOT 'cash'
+        OR o.accounting_mode <> 'daily_outstanding'
+        OR o.supplier_id IS NOT NULL
+        OR o.legacy_cash_purchase_id IS NOT NULL
+        OR o.initial_supplier_payment_id IS NOT NULL
+        OR o.total_minor <> o.amount_paid_minor
+        OR EXISTS (SELECT 1 FROM daily_purchase_outstandings ob
+          WHERE ob.operation_id = o.id)
+      )
+    ''', [sheetId])) ?? 0;
     return DailySheetDetail(
       id: sheetId,
       sheetNumber: sheet['sheet_number'] as String,
@@ -1482,13 +1772,16 @@ class DailyPurchasesRepository {
       employeeId: sheet['employee_id'] as int?,
       employeeName: sheet['employee_name'] as String?,
       notes: sheet['notes'] as String?,
-      status: sheet['status'] as String,
+      status: archived ? 'ARCHIVED' : sheet['status'] as String,
       handedOverAt: sheet['handed_over_at'] as String?,
       closedAt: sheet['closed_at'] as String?,
       headerSnapshotJson: sheet['header_snapshot_json'] as String?,
       totalsSnapshotJson: sheet['totals_snapshot_json'] as String?,
       operationsSnapshotJson: sheet['operations_snapshot_json'] as String?,
       operations: operations,
+      hasOperationHistory: hasOperationHistory,
+      canEditIdentity: !archived && sheet['status'] == 'DRAFT' &&
+          restrictedOperationCount == 0 && amendmentCount == 0,
       amendmentCount: amendmentCount,
     );
   }
@@ -1503,6 +1796,7 @@ class DailyPurchasesRepository {
     }
     Map<String, Object?> business = {};
     Map<String, Object?>? branch;
+    Map<String, Object?>? employee;
     if (snapshot['business'] is Map) {
       business = Map<String, Object?>.from(snapshot['business'] as Map);
     } else {
@@ -1515,6 +1809,13 @@ class DailyPurchasesRepository {
       final rows = await db.query('branches',
           where: 'id = ?', whereArgs: [detail.branchId], limit: 1);
       if (rows.isNotEmpty) branch = rows.first;
+    }
+    if (snapshot['employee'] is Map) {
+      employee = Map<String, Object?>.from(snapshot['employee'] as Map);
+    } else if (detail.employeeId != null) {
+      final rows = await db.query('employees',
+          where: 'id = ?', whereArgs: [detail.employeeId], limit: 1);
+      if (rows.isNotEmpty) employee = rows.first;
     }
     final amendments = await getAmendments(sheetId);
     var reportSheet = detail;
@@ -1541,6 +1842,7 @@ class DailyPurchasesRepository {
           totalsSnapshotJson: detail.totalsSnapshotJson,
           operationsSnapshotJson: detail.operationsSnapshotJson,
           operations: snapshotOperations,
+          hasOperationHistory: detail.hasOperationHistory,
           amendmentCount: detail.amendmentCount,
         );
       }
@@ -1574,7 +1876,8 @@ class DailyPurchasesRepository {
       shopAddress: business['address'] as String?,
       shopPhone: business['phone'] as String?,
       managerName: business['manager_name'] as String?,
-      buyerName: business['buyer_name'] as String?,
+      buyerName: (employee?['name'] as String?) ?? detail.employeeName ??
+          business['buyer_name'] as String?,
       branchName: (branch?['name'] as String?) ?? detail.branchName,
       branchCode: branch?['code'] as String?,
       totalsByCurrency: totals,
@@ -1868,9 +2171,10 @@ class DailyPurchasesRepository {
   }
 
   void _validateDate(String value) {
+    final parsed = DateTime.tryParse(value);
     if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value) ||
-        DateTime.tryParse(value) == null) {
-      throw ArgumentError('Date must use YYYY-MM-DD');
+        parsed == null || parsed.toIso8601String().substring(0, 10) != value) {
+      throw ArgumentError('Date must be a real date in YYYY-MM-DD form');
     }
   }
 

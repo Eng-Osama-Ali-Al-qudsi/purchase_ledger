@@ -147,6 +147,8 @@ class DailySheetDetail {
     required this.totalsSnapshotJson,
     required this.operationsSnapshotJson,
     required this.operations,
+    required this.hasOperationHistory,
+    this.canEditIdentity = false,
     required this.amendmentCount,
   });
 
@@ -165,6 +167,8 @@ class DailySheetDetail {
   final String? totalsSnapshotJson;
   final String? operationsSnapshotJson;
   final List<DailyPurchaseOperation> operations;
+  final bool hasOperationHistory;
+  final bool canEditIdentity;
   final int amendmentCount;
 
   bool get isEditable => status == 'DRAFT';
