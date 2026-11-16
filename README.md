@@ -1,95 +1,172 @@
-# دفتر المشتريات — Purchase Ledger V2
+<div align="center" dir="rtl">
 
-**Package version:** `2.0.0+6`  
-**SQLite schema:** `4`  
-**Status:** Source implementation updated; Flutter SDK verification and Android device acceptance are still pending.
+<img src="assets/branding/app_icon.png" alt="أيقونة تطبيق دفتر المشتريات" width="84" />
 
-## Purpose
+# Purchase Ledger
 
-Offline-first Flutter application for two separate purchase-accounting workflows:
+### نظام إدارة المشتريات الآجلة واليومية
 
-1. **Supplier account:** credit invoices, partial payments, allocations across invoices, supplier advances, returns, adjustments, payment reversals, and supplier statements.
-2. **Daily purchases book:** daily sheets containing multiple operations and items, cash/partial/credit purchases, separate daily outstanding balances, or posting to an existing supplier account without creating a duplicate debt.
+تطبيق Flutter لتنظيم المشتريات وأوراق اليومية وحسابات الموردين، مع تتبّع الفواتير والمدفوعات والمستحقات وإعداد التقارير.
 
-## Technical baseline
+**Flutter · Dart · Riverpod · SQLite · Android**
 
-Keep the approved project baseline unchanged unless a verified build issue requires a targeted change:
+**حالة المشروع: قيد التطوير والاختبار — Development / Testing**
 
-- Flutter 3.47.2 / Dart 3.13.2
-- Android Gradle Plugin 8.11.1
-- Gradle Wrapper 8.14.6 (bin)
-- Kotlin 2.2.20
-- Java 21 runtime from Android Studio JBR
-- SQLite (`sqflite`), Riverpod, and GoRouter
-- Arabic/English localization and light/dark/system themes
+</div>
 
-## Database migrations
+> **English overview:** Purchase Ledger is an offline-first Flutter application for recording daily and credit purchases, tracking supplier balances and invoice payments, and producing accounting reports. This repository represents an evolving implementation; Android integration and release readiness still require verification.
 
-Fresh installation order:
+## نظرة عامة | Overview
 
-1. Base schema
-2. V2: canonical supplier movement ledger, supplier-payment idempotency, daily sheets/operations/items/outstandings, amendments and workflow guards
-3. V3: additional daily-operation fields, outstanding adjustments, and append-only controls
-4. V4: daily purchase payment-method persistence, safe legacy backfill, missing supplier receipt references, and additional accounting-integrity triggers
+يساعد **دفتر المشتريات** المحلات والأعمال التجارية على تسجيل عمليات الشراء اليومية، ومتابعة الفواتير الآجلة للموردين، وربط الدفعات والمرتجعات والتسويات بسجلات قابلة للمراجعة. تُخزّن البيانات محليًا باستخدام SQLite، وتدعم الواجهة العربية والإنجليزية، مع أوضاع المظهر الفاتح والداكن.
 
-Existing databases are upgraded sequentially through `onUpgrade`; old records are retained. V4 temporarily removes only the V2 daily-operation update guard while it backfills historical payment methods, then restores that guard in a `finally` block.
+لا يمثل هذا المستودع نظام تخطيط موارد مؤسسية كاملًا، ولا يُفترض أنه نظام مخزون متكامل. وظائفه الأساسية منصبّة على تسجيل المشتريات والحسابات المرتبطة بها.
 
-The V4 migration is designed to be repeatable. It only backfills payment methods that remain `unspecified`, and it only creates receipt references for supplier payments whose receipt number is blank.
+## المزايا الموجودة في المصدر | Main Features
 
-## Accounting controls
+| المجال | ما يقدمه التطبيق |
+| --- | --- |
+| **المشتريات الآجلة** | إدخال فواتير الموردين وأصنافها، عرض التفاصيل، ومتابعة المستحقات والدفعات والمرتجعات. |
+| **المشتريات اليومية** | دفتر أوراق يومية، عمليات نقدية وآجلة، حقول للفرع ومسؤول المشتريات، وحالات للورقة وتقرير لتسليمها للحسابات. |
+| **الموردون** | سجل للموردين، نظرة عامة على الحساب، الفواتير والدفعات وكشف حساب بحسب العملة. |
+| **الحركات المالية** | دفعات الموردين وتخصيصاتها، الأرصدة المقدّمة، التسويات والمرتجعات والعمليات العكسية ضمن القيود المتاحة. |
+| **المستحقات اليومية** | متابعة المستحقات المستقلة وسجل السداد والتعديلات المرتبطة بها. |
+| **التقارير** | توليد كشوف PDF وتقارير تسليم أوراق اليومية، مع إمكان الطباعة والمشاركة عبر واجهات النظام. ويتضمن المصدر خدمة تصدير CSV. |
+| **إعدادات التشغيل** | بيانات المحل، والفروع، ومسؤولو المشتريات، ووحدات قياس منفصلة للمشتريات الآجلة واليومية. |
+| **اللغة والمظهر** | العربية والإنجليزية، واتجاه واجهة ملائم، والوضعان الفاتح والداكن. |
+| **التدقيق** | أحداث وسجلات تغييرات مالية محفوظة وفق تصميم قاعدة البيانات الحالي. |
 
-- Monetary values are stored as integer minor units; quantities are stored in thousandths.
-- Supplier balances are calculated separately for each currency.
-- Supplier-account daily purchases post to the supplier ledger and do not create a second daily-outstanding record.
-- Unallocated supplier payments remain advances until allocated.
-- Payment and allocation amounts are checked by both repository logic and SQLite triggers.
-- Posted invoices, supplier payments, allocations, returns, opening balances, handover snapshots, and audit/event records are protected against silent rewriting or deletion.
-- Daily sheets follow `DRAFT → READY_FOR_HANDOVER → HANDED_OVER → CLOSED`; after handover, corrections are recorded as append-only amendments.
+> وجود الوظيفة في المصدر لا يعني أن جميع سيناريوهات تشغيلها على الهاتف قد اجتازت الاختبارات النهائية. اطّلع على [حالة التحقق](#حالة-التطوير-والتحقق--project-status) قبل الاعتماد المالي.
 
-## Changes included in V4 source package
+## لقطات من التطبيق | Application Screenshots
 
-- Persist and report the actual payment method used at purchase time.
-- Backfill historical payment methods only where the original payment record provides evidence.
-- Assign a stable visible receipt reference to older supplier payments that had no receipt number.
-- Strengthen idempotency comparison for daily operations and payments; UI dialogs retain one key for retries during the same save attempt.
-- Persist daily item product/category IDs, category labels, seller names, and item notes in live records and handover snapshots.
-- Make daily-sheet list/detail totals use the same definition of amount paid at purchase.
-- Add CSV export actions for supplier statements and daily handover reports.
-- Include daily item categories in PDF/CSV handover reports and keep operation-level financial amounts from repeating across every item row.
-- Archive supplier statement snapshots together with the business-profile data used to generate them.
-- Preserve the original `created_at` when editing the business profile.
-- Add a first-run widget smoke test.
+لقطات حقيقية من اختبار Android، أُخذت في الوضعين الفاتح والداكن. اختيرت هنا **خمس صور لا تُظهر أسماء الموردين أو أرقام هواتفهم أو أرصدة شخصية**؛ ولا تزال معظمها تعرض الحالة الأولية دون معاملات. أُزيلت بيانات EXIF من النسخ المنشورة. الصور لا تُستخدم لإثبات اكتمال الوظائف المحاسبية.
 
-## Run on Windows
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/welcome_dark.jpg" alt="شاشة الترحيب وإعداد بيانات المحل في الوضع الداكن" width="265" /><br />
+      <strong>الترحيب · Welcome</strong><br />
+      <sub>بداية إعداد معلومات المحل اللازمة للتقارير وكشوف الحساب.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/shop_setup_dark.jpg" alt="نموذج بيانات المحل الخالي في الوضع الداكن" width="265" /><br />
+      <strong>إعداد المحل · Shop Setup</strong><br />
+      <sub>نموذج الاسم والبيانات الأساسية والعملة الافتراضية.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/suppliers_empty_light.jpg" alt="صفحة الموردين فارغة في الوضع الفاتح مع زر إضافة مورد" width="265" /><br />
+      <strong>سجل الموردين · Suppliers</strong><br />
+      <sub>عرض قائمة الموردين وإضافة مورد جديد؛ تظهر هنا حالة القائمة الفارغة.</sub>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/credit_invoices_empty_light.jpg" alt="صفحة فواتير المشتريات الآجلة فارغة في الوضع الفاتح" width="265" /><br />
+      <strong>فواتير الآجل · Credit Invoices</strong><br />
+      <sub>مدخل فواتير المشتريات الآجلة وإجراء إنشاء فاتورة جديدة.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/daily_sheets_empty_light.jpg" alt="دفتر المشتريات اليومية مع الفلاتر وزر ورقة جديدة" width="265" /><br />
+      <strong>دفتر اليومية · Daily Sheets</strong><br />
+      <sub>الفلاتر بحسب التاريخ والفرع والمسؤول، وعرض الأوراق وإنشاؤها.</sub>
+    </td>
+    <td align="center">
+      <strong>المزيد من الشاشات قريبًا</strong><br />
+      <sub>ستضاف لقطات تفاصيل المورد والدفعات والتقارير بعد توفير بيانات عرض تجريبية آمنة للنشر.</sub>
+    </td>
+  </tr>
+</table>
 
-Open PowerShell in the project directory and run:
+> تنبيه: لقطات الشاشات التي احتوت أسماء وأرقامًا وبيانات أعمال فعلية **لم تُدرج** في ملفات المستودع العام. راجع دليل النشر المرفق مع التسليم قبل إضافة صور أخرى.
 
-```powershell
-flutter --version
+## التقنية والبنية | Technology & Architecture
+
+التقنيات التالية مثبتة في `pubspec.yaml` وملفات المصدر:
+
+| التقنية | الاستخدام |
+| --- | --- |
+| Flutter / Dart | تطبيق Android وواجهات Material. يتطلب المصدر Dart `^3.6.0`. |
+| `flutter_riverpod` | مزودات الحالة والمستودعات ومصادر البيانات. |
+| `go_router` | التنقل بين شاشات التطبيق. |
+| `sqflite` | التخزين المحلي والترقيات المتسلسلة لقاعدة البيانات. آخر ترقية موجودة: **V8**. |
+| `intl` و`flutter_localizations` | التنسيق المحلي واللغة. |
+| `pdf` و`pdf_text_shaper` و`printing` | تشكيل النص العربي، وتوليد PDF وطباعته ومشاركته. |
+| `image_picker` و`share_plus` و`url_launcher` | اختيار المرفقات والمشاركة وفتح الروابط المدعومة. |
+
+### هيكل المشروع الفعلي
+
+```text
+purchase_ledger/
+├── android/               # إعدادات وتطبيق Android
+├── assets/                # الأيقونة وخطوط العرض العربية
+├── docs/screenshots/      # لقطات Android المختارة للنشر
+├── lib/
+│   ├── app/               # التوجيه ومزودات Riverpod والتطبيق
+│   ├── core/              # SQLite، الحسابات، الإعدادات، التقارير، التعريب
+│   └── features/          # dashboard، purchases، suppliers
+├── qa/                    # أدوات تحقق إضافية على Windows
+├── test/                  # اختبارات Flutter وفحوص SQLite
+├── pubspec.yaml
+├── pubspec.lock
+├── CHANGELOG.md
+└── README.md
+```
+
+## التثبيت والتشغيل | Installation
+
+تحتاج إلى Flutter SDK متوافق مع `environment.sdk: ^3.6.0`، وأدوات Android SDK وجهاز أو محاكي متاح. اقرأ متطلبات SDK والإعدادات قبل التنفيذ:
+
+```bash
 flutter doctor -v
 flutter pub get
-dart format lib test
+flutter run
+```
+
+للفحص والبناء المحلي:
+
+```bash
 flutter analyze
 flutter test
 flutter build apk --debug
 ```
 
-Expected APK path:
+ولإنشاء حزمة إطلاق بعد إعداد التوقيع والتحقق من الأمان واختبار التطبيق:
 
-```text
-build\app\outputs\flutter-apk\app-debug.apk
+```bash
+flutter build apk --release
 ```
 
-The source-fix patch intentionally does not replace `pubspec.lock`, so the lockfile generated by `flutter pub get` on the owner's Windows machine must be preserved. On a fresh extraction, run `flutter pub get` before analysis/build. No APK is included.
+**هذه أوامر للمطور وليست نتائج اختبارات.** يجب تشغيلها على النسخة الفعلية قبل نشر أي إصدار أو استخدام التطبيق ببيانات مالية تشغيلية. لا تستخدم `flutter create` لتوليد مشروع بديل؛ افتح هذا المجلد كما هو.
 
-## Current verification boundary
+## البيانات والتدقيق | Data & Accounting Safety
 
-The SQLite migration and accounting scenarios listed in `Test_Report.md` passed in an in-memory SQLite harness that executed the project's SQL in migration order. This is not a substitute for `flutter analyze`, `flutter test`, `flutter build apk`, or on-device sqflite/UI validation. Do not use this source package as the sole production accounting record until those checks and independent statement reconciliation are complete.
+- يحتفظ التطبيق بقاعدة SQLite محلية، وترقيات المخطط موجودة حتى `purchase_ledger_v8_migration.dart`.
+- تتضمن الشيفرة قيودًا لحماية بعض الحركات المالية التاريخية من التعديل أو الحذف غير الآمن.
+- الحذف النهائي للمسودات مقيد بحالات آمنة محددة؛ ليس حذفًا عامًا لكل ورقة بها تاريخ مالي.
+- قبل تحديث التطبيق على هاتف يحوي بيانات فعلية، **احفظ نسخة احتياطية واختبر ترقية قاعدة البيانات على نسخة منها**.
+- لا ترفع قواعد بيانات التشغيل أو صور فواتير المستخدمين أو مفاتيح التوقيع إلى GitHub.
 
-The current Android application ID remains `com.example.purchase_ledger`; choose and verify the official application ID before commercial publication.
+## حالة التطوير والتحقق | Project Status
 
-## Reports
+**الحالة الحالية: Development / Testing.** أحدث تقرير برمجي مرفق مع التسليم بتاريخ 16 نوفمبر 2026 يسجل نجاح **37 اختبار Python/SQLite** على بيئة تجريبية. ولا يثبت التقرير نجاح `flutter analyze` أو `flutter test` أو بناء APK على أحدث نسخة؛ إذ لم تكن أدوات Flutter وDart متاحة في بيئة ذلك التسليم. كذلك بقي اختبار ترقية قاعدة هاتف حقيقية ومعاينة تقارير PDF على Android ضمن أعمال التحقق المطلوبة.
 
-- `Implementation_Report.md` — implementation scope and verification boundary.
-- `Test_Report.md` — exact checks executed and checks still pending.
-- The previous PDF report is retained under `docs/archive/Implementation_Report_PreV4.pdf` as historical material; it does not describe the V4 source state.
+ينبغي إجراء اختبارات Flutter وAndroid والتشغيل والمحاسبة على جهاز فعلي قبل اعتبار التطبيق جاهزًا للإنتاج. لم تُنشأ شارات نجاح CI أو إصدار منشور لعدم توفر دليل عليها.
+
+## سجل التطوير | Development History
+
+راجع [CHANGELOG.md](CHANGELOG.md) للسجل الموجز المثبت من ملفات المصدر وتقارير التسليم. يوجد أيضًا [تقرير المرحلة الثانية](PHASE_TWO_REPORT_AR.md) ضمن أرشيف المشروع الأصلي. تعرّف هذه الوثائق بما تغير، ولا تحل محل اختبارات التشغيل.
+
+## المطور | Developer
+
+**المهندس أسامة علي القدسي**<br />
+**Eng. Osama Ali Al-Qudsi**<br />
+مهندس برمجيات ومطور حلول تقنية متكاملة · Software Engineer & Integrated Solutions Developer
+
+البريد الإلكتروني: [engosamaali7@gmail.com](mailto:engosamaali7@gmail.com)
+
+## الترخيص | License
+
+لم يتضمن الأرشيف المعتمد ملف ترخيص قانوني `LICENSE`، ولم تتم إضافة ترخيص نيابة عن المالك. إتاحة الشيفرة على GitHub **لا تعني** منح إذن تلقائي بإعادة استخدامها أو توزيعها؛ تُحدَّد حقوق الاستخدام بواسطة مالك المشروع.
